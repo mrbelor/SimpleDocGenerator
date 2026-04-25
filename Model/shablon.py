@@ -43,7 +43,7 @@ def test():
 	from load import load_data, transform_time
 	from pprint import pprint as pp
 
-	data = load_data("./test/EXPORT.xls")
+	data = load_data("./test/data_example.xls")
 	# переводит из "13:00-17:00" в "с 13:00 до 17:00"
 	data = transform_time(data, "Время")
 

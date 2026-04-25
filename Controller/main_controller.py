@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 from Model import load_data, transform_time, shablon
 from .config_manager import ConfigManager, NAME
@@ -39,17 +40,40 @@ class MainController:
     def remove_template(self, name):
         return self.config.remove_template(name)
 
+    def get_suggested_filename(self, template_name):
+        template_names = self.config.config.get("template_names", {})
+        if template_name in template_names:
+            return template_names[template_name]
+        
+        # Убираем расширение у оригинального шаблона
+        base_tmpl = os.path.splitext(template_name)[0]
+        return f"Результат_{base_tmpl}"
+
     def generate_document(self, template_name, custom_path=None):
         if custom_path:
             # Сохраняем папку сохранения в любом случае
             self.config.config["last_output_folder"] = os.path.dirname(custom_path)
+            
+            # Ассоциативное запоминание имени (без расширения)
+            base_name = os.path.splitext(os.path.basename(custom_path))[0]
+            if "template_names" not in self.config.config:
+                self.config.config["template_names"] = {}
+            self.config.config["template_names"][template_name] = base_name
             self.config.save()
+            
             final_output_path = custom_path
         else:
             save_dir = Path(self.config.config["last_output_folder"])
             if not save_dir.exists():
                 save_dir.mkdir(parents=True, exist_ok=True)
-            final_output_path = str(save_dir / f"Результат_{template_name}")
+                
+            base_name = self.get_suggested_filename(template_name)
+            final_output_path = str(save_dir / f"{base_name}.docx")
+            
+            # Если файл существует, приписываем unix timestamp
+            if os.path.exists(final_output_path):
+                unix_time = int(time.time())
+                final_output_path = str(save_dir / f"{base_name}_{unix_time}.docx")
 
         if not self.source_data:
             return False, "Нет данных!"

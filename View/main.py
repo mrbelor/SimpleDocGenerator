@@ -339,7 +339,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         path = fd.asksaveasfilename(
             initialdir=self.controller.get_last_output_folder(),
             defaultextension=".docx",
-            initialfile=f"Результат_{template}",
+            initialfile=self.controller.get_suggested_filename(template),
             filetypes=[("Word Document", "*.docx")]
         )
         if path:
@@ -358,16 +358,32 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.update_save_info()
 
     def _start_loading(self):
+        if getattr(self, '_reset_vis_job', None):
+            self.after_cancel(self._reset_vis_job)
+            self._reset_vis_job = None
         self.gen_btn.configure(text=" Загрузка...", image=self.icon_loading, compound="left", state="disabled")
         self.gen_as_btn.configure(state="disabled")
 
     def _stop_loading(self):
+        if getattr(self, '_reset_vis_job', None):
+            self.after_cancel(self._reset_vis_job)
+            self._reset_vis_job = None
         self.gen_btn.configure(text="Сформировать", image=None, state="normal")
         self.gen_as_btn.configure(state="normal")
 
     def _show_success(self):
         self.gen_btn.configure(text="", image=self.icon_check, state="disabled")
-        self.after(3000, self._stop_loading)
+        
+        # КД нажатия уменьшено в 2 раза (с 3000 до 1500)
+        self.after(1500, lambda: self.gen_btn.configure(state="normal"))
+        self.after(1500, lambda: self.gen_as_btn.configure(state="normal"))
+        
+        # Анимация галочки уменьшена в 1.5 раза (с 3000 до 2000)
+        def reset_vis():
+            if self.gen_btn.cget("text") == "":
+                self.gen_btn.configure(text="Сформировать", image=None)
+                
+        self._reset_vis_job = self.after(2000, reset_vis)
         self.show_status("Готово!", "green")
 
     def update_save_info(self):
