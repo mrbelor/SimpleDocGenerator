@@ -199,7 +199,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.error_label.pack(padx=20, pady=15)
 
-    def show_error_popup(self):
+    def show_error_popup(self, message="Неверный формат файла!"):
+        self.error_label.configure(text=message)
         self.error_frame.place(relx=0.5, rely=0.5, anchor="center")
         self.error_frame.lift()
 
@@ -253,6 +254,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         success, msg = self.controller.load_source(path)
         if success:
             self.data_path_label.configure(text=msg, text_color="#2ecc71")
+            self.after(2000, lambda: self.data_path_label.configure(text_color=("black", "white")))
         else:
             self.show_status(msg, "red")
 
@@ -298,25 +300,40 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def generate(self):
         self.hide_error_popup()
-        self.update_templates_list()
         if self.template_var.get() in ["Шаблон не выбран", "Файл не найден"]:
-            self.show_status("Ошибка: Выберите существующий шаблон!", "red")
+            self.show_error_popup("Шаблон не выбран!")
             return
+            
+        self.update_templates_list()
+        # Повторная проверка на случай, если файл удалили в фоне
+        if self.template_var.get() in ["Шаблон не выбран", "Файл не найден"]:
+            self.show_error_popup("Шаблон не выбран!")
+            return
+            
         self._start_loading()
         self.after(100, self._run_generate)
 
     def _run_generate(self):
         success, msg = self.controller.generate_document(self.template_var.get())
         if success: self._show_success()
-        else: self._stop_loading(); self.show_status(msg, "red")
+        else: 
+            self._stop_loading()
+            if msg in ["Нет данных!", "Шаблон не выбран!", "Файл шаблона не найден!"]:
+                self.show_error_popup(msg)
+            else:
+                self.show_status(msg, "red")
         self.update_save_info()
 
     def generate_as(self):
         self.hide_error_popup()
+        if self.template_var.get() in ["Шаблон не выбран", "Файл не найден"]:
+            self.show_error_popup("Шаблон не выбран!")
+            return
+            
         self.update_templates_list()
         template = self.template_var.get()
         if not template or template in ["Шаблон не выбран", "Файл не найден"]:
-            self.show_status("Сначала выберите существующий шаблон!", "red")
+            self.show_error_popup("Шаблон не выбран!")
             return
             
         path = fd.asksaveasfilename(
@@ -332,7 +349,12 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _run_generate_as(self, template, path):
         success, msg = self.controller.generate_document(template, custom_path=path)
         if success: self._show_success()
-        else: self._stop_loading(); self.show_status(msg, "red")
+        else: 
+            self._stop_loading()
+            if msg in ["Нет данных!", "Шаблон не выбран!", "Файл шаблона не найден!"]:
+                self.show_error_popup(msg)
+            else:
+                self.show_status(msg, "red")
         self.update_save_info()
 
     def _start_loading(self):

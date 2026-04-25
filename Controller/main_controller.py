@@ -21,7 +21,7 @@ class MainController:
             self.config.config["last_data_folder"] = os.path.dirname(file_path)
             self.config.save()
             
-            return True, f"Загружено: {os.path.basename(file_path)}"
+            return True, f"Выбрано: {os.path.basename(file_path)}"
         except Exception as e:
             return False, f"Ошибка: {str(e)}"
 
@@ -40,6 +40,17 @@ class MainController:
         return self.config.remove_template(name)
 
     def generate_document(self, template_name, custom_path=None):
+        if custom_path:
+            # Сохраняем папку сохранения в любом случае
+            self.config.config["last_output_folder"] = os.path.dirname(custom_path)
+            self.config.save()
+            final_output_path = custom_path
+        else:
+            save_dir = Path(self.config.config["last_output_folder"])
+            if not save_dir.exists():
+                save_dir.mkdir(parents=True, exist_ok=True)
+            final_output_path = str(save_dir / f"Результат_{template_name}")
+
         if not self.source_data:
             return False, "Нет данных!"
         if not template_name or template_name == "Шаблон не выбран":
@@ -50,17 +61,6 @@ class MainController:
             return False, "Файл шаблона не найден!"
 
         try:
-            if custom_path:
-                final_output_path = custom_path
-                # Сохраняем папку сохранения
-                self.config.config["last_output_folder"] = os.path.dirname(custom_path)
-                self.config.save()
-            else:
-                save_dir = Path(self.config.config["last_output_folder"])
-                if not save_dir.exists():
-                    save_dir.mkdir(parents=True, exist_ok=True)
-                final_output_path = str(save_dir / f"Результат_{template_name}")
-
             # Вызов генерации из Model
             final_path = shablon(self.source_data, str(template_path), final_output_path)
             return True, f"Успешно сохранено"
