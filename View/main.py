@@ -95,6 +95,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         template_controls.pack(pady=5)
         
         self.template_var = ctk.StringVar()
+        self.template_var.trace_add("write", self.update_save_info)
         templates = self.controller.get_templates()
         self.template_dropdown = ctk.CTkOptionMenu(
             template_controls, 
@@ -167,9 +168,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.save_info_label = ctk.CTkLabel(
             left_column, text=f"Папка: {self.controller.get_save_folder_name()}",
-            font=("Arial", 10), text_color="gray"
+            font=("Arial", 12), text_color="gray", height=12
         )
-        self.save_info_label.pack(fill="x", pady=(2, 0))
+        self.save_info_label.pack(fill="x", pady=0)
+
+        self.save_name_label = ctk.CTkLabel(
+            left_column, text="Имя: не определено",
+            font=("Arial", 12), text_color="gray", height=12
+        )
+        self.save_name_label.pack(fill="x", pady=0)
 
         self.gen_as_btn = ctk.CTkButton(
             btns_outer_frame, text="Сформировать как...", height=45,
@@ -183,6 +190,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.status_label = ctk.CTkLabel(self, text="", font=("Arial", 12))
         self.status_label.pack(pady=(0, 10))
+        
+        self.update_save_info()
 
     def _setup_overlay(self):
         self.overlay_frame = ctk.CTkFrame(
@@ -387,8 +396,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._reset_vis_job = self.after(2000, reset_vis)
         self.show_status("Готово!", "green")
 
-    def update_save_info(self):
+    def update_save_info(self, *args):
+        if not hasattr(self, 'save_info_label') or not hasattr(self, 'save_name_label'):
+            return
         self.save_info_label.configure(text=f"Папка: {self.controller.get_save_folder_name()}")
+        template = self.template_var.get()
+        if template and template not in ["Шаблон не выбран", "Файл не найден"]:
+            suggested = self.controller.get_suggested_filename(template)
+            self.save_name_label.configure(text=f"Имя: {suggested}")
+        else:
+            self.save_name_label.configure(text="Имя: не определено")
 
     def show_status(self, text, color):
         colors = {"red": "#e74c3c", "green": "#2ecc71", "orange": "#f39c12", "white": ("black", "white")}
