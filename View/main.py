@@ -107,6 +107,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.template_dropdown.pack(side="left", padx=(0, 5))
         self.template_var.set(templates[0] if templates else "Шаблон не выбран")
         
+        # При наведении или клике на список - сверяем файлы с папкой AppData
+        self.template_dropdown.bind("<Enter>", lambda e: self.update_templates_list())
+        self.template_dropdown.bind("<Button-1>", lambda e: self.update_templates_list(), add="+")
+        
         # Кнопка Плюс
         self.add_temp_btn = ctk.CTkButton(
             template_controls, text="+", width=30, height=30,
@@ -292,11 +296,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if select_name:
             self.template_var.set(select_name)
         elif current not in new_values:
-            # Если текущего файла больше нет в списке
-            if templates:
-                self.template_var.set(templates[0])
-            else:
-                self.template_var.set("Шаблон не выбран")
+            # Если текущего файла больше нет в списке (например, удалили из папки)
+            self.template_var.set("Шаблон не выбран")
 
     def generate(self):
         self.hide_error_popup()
