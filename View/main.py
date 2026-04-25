@@ -1,5 +1,6 @@
 import os
 import customtkinter as ctk
+from PIL import Image
 from tkinterdnd2 import TkinterDnD, DND_ALL
 from tkinter import filedialog as fd
 from Controller.main_controller import MainController
@@ -18,6 +19,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.geometry("500x520")
         self.minsize(500, 520)
         
+        # Установка иконки окна
+        icon_path = self.controller.config.resource_path(os.path.join("exe_belly", "app_icon.ico"))
+        self.iconbitmap(icon_path)
+        
+        self._init_icons()
         self._setup_ui()
         self._setup_overlay()
         self._setup_error_popup()
@@ -30,6 +36,19 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # Любой клик в окне скрывает ошибку
         self.bind_all("<Button-1>", self.hide_error_popup)
 
+    def _init_icons(self):
+        def load_icon(name, size=(20, 20)):
+            path = self.controller.config.resource_path(os.path.join("exe_belly", "icons", f"{name}.png"))
+            img = Image.open(path)
+            return ctk.CTkImage(light_image=img, dark_image=img, size=size)
+
+        self.icon_sun = load_icon("sun", (20, 20))
+        self.icon_moon = load_icon("moon", (20, 20))
+        self.icon_folder = load_icon("folder", (20, 20))
+        self.icon_trash = load_icon("trash", (16, 16))
+        self.icon_loading = load_icon("loading", (20, 20))
+        self.icon_check = load_icon("check", (20, 20))
+
     def _setup_ui(self):
         self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.header_frame.pack(fill="x", padx=20, pady=(10, 0))
@@ -37,7 +56,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # Кнопка переключения темы
         self.theme_btn = ctk.CTkButton(
             self.header_frame, 
-            text="☀️" if self.appearance_mode == "dark" else "🌙", 
+            text="", 
+            image=self.icon_sun if self.appearance_mode == "dark" else self.icon_moon,
             width=40, 
             height=40,
             fg_color=("gray70", "gray30"),
@@ -56,7 +76,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.data_path_label.pack(pady=5)
         
         self.select_data_btn = ctk.CTkButton(
-            self.main_frame, text="📁 Выбрать файл данных", 
+            self.main_frame, text=" Выбрать файл данных", 
+            image=self.icon_folder,
+            compound="left",
             fg_color=("gray75", "gray25"),
             hover_color=("gray65", "gray35"),
             text_color=("black", "white"),
@@ -88,6 +110,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # Кнопка Плюс
         self.add_temp_btn = ctk.CTkButton(
             template_controls, text="+", width=30, height=30,
+            font=("Arial", 16, "bold"),
+            anchor="center",
             fg_color=("gray75", "gray25"),
             hover_color=("gray65", "gray35"),
             text_color=("black", "white"),
@@ -99,8 +123,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # Кнопка Корзина
         self.delete_btn = ctk.CTkButton(
-            template_controls, text="🗑️", width=30, height=30,
+            template_controls, text="", image=self.icon_trash, width=30, height=30,
             fg_color="#c0392b", hover_color="#e74c3c",
+            anchor="center",
             command=self.delete_template
         )
         self.delete_btn.pack(side="left", padx=2)
@@ -108,7 +133,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.delete_btn.bind("<Leave>", lambda e: self.show_status("", "gray"))
 
         self.folder_btn = ctk.CTkButton(
-            self.main_frame, text="📂 Открыть папку шаблонов", 
+            self.main_frame, text=" Открыть папку шаблонов", 
+            image=self.icon_folder,
+            compound="left",
             width=200, height=28, 
             fg_color=("gray75", "gray25"),
             hover_color=("gray65", "gray35"),
@@ -206,10 +233,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def toggle_theme(self):
         if ctk.get_appearance_mode() == "Dark":
             new_mode = "light"
-            self.theme_btn.configure(text="🌙")
+            self.theme_btn.configure(image=self.icon_moon)
         else:
             new_mode = "dark"
-            self.theme_btn.configure(text="☀️")
+            self.theme_btn.configure(image=self.icon_sun)
             
         ctk.set_appearance_mode(new_mode)
         self.controller.set_appearance_mode(new_mode)
@@ -226,7 +253,6 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         success, msg = self.controller.load_source(path)
         if success:
             self.data_path_label.configure(text=msg, text_color="#2ecc71")
-            self.after(2000, lambda: self.data_path_label.configure(text_color="gray"))
         else:
             self.show_status(msg, "red")
 
@@ -310,15 +336,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.update_save_info()
 
     def _start_loading(self):
-        self.gen_btn.configure(text="⌛ Загрузка...", state="disabled")
+        self.gen_btn.configure(text=" Загрузка...", image=self.icon_loading, compound="left", state="disabled")
         self.gen_as_btn.configure(state="disabled")
 
     def _stop_loading(self):
-        self.gen_btn.configure(text="Сформировать", state="normal")
+        self.gen_btn.configure(text="Сформировать", image=None, state="normal")
         self.gen_as_btn.configure(state="normal")
 
     def _show_success(self):
-        self.gen_btn.configure(text="✅", state="disabled")
+        self.gen_btn.configure(text="", image=self.icon_check, state="disabled")
         self.after(3000, self._stop_loading)
         self.show_status("Готово!", "green")
 
@@ -326,8 +352,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.save_info_label.configure(text=f"Папка: {self.controller.get_save_folder_name()}")
 
     def show_status(self, text, color):
-        colors = {"red": "#e74c3c", "green": "#2ecc71", "orange": "#f39c12", "gray": "gray"}
-        self.status_label.configure(text=text, text_color=colors.get(color, "gray"))
+        colors = {"red": "#e74c3c", "green": "#2ecc71", "orange": "#f39c12", "white": ("black", "white")}
+        self.status_label.configure(text=text, text_color=colors.get(color, ("black", "white")))
 
 if __name__ == "__main__":
     app = App()
