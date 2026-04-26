@@ -20,11 +20,14 @@ def load_data(file_path):
 		df = pd.read_csv(path, sep=None, engine='python')
 	elif ext in ('.xls', '.xlsx'):
 		try:
-			df = pd.read_excel(path)
-		except Exception:
+			# Читаем все листы в словарь DataFrames
+			all_sheets = pd.read_excel(path, sheet_name=None)
+			# Конкатенируем все листы в один DataFrame
+			df = pd.concat(all_sheets.values(), ignore_index=True)
+		except Exception as e:
 			# Если не удалось прочитать как Excel, пробуем как CSV
 			# (некоторые системы выгружают CSV с расширением .xls)
-			print(f"Не удалось прочитать {path.name} как Excel. Попытка в csv...")
+			print(f"Не удалось прочитать {path.name} как Excel: {e}. Попытка в csv...")
 			df = pd.read_csv(path, sep=None, engine='python')
 	else:
 		raise ValueError("Формат не поддерживается. Ожидается .csv, .xls или .xlsx")
