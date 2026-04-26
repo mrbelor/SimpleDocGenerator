@@ -1,4 +1,17 @@
 # SimpleDocGenerator
+(sorry for spagetti)
+
+# Использование
+
+![Demo](assets/usage.gif)
+
+В шаблонах должны быть указаны названия полей СООТВЕТСТВУЮЩИЕ названиям полей из Excel файла
+В формате: `{{Название}}` без пробелов
+
+![image](assets/preview_dock.png)
+
+![image](assets/preview_data.png)
+
 
 # Запуск
 
