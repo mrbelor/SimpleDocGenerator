@@ -2,7 +2,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from Model import load_data, transform_time, shablon
+from Model import load_data, transform_time, transform_address, shablon
 from .config_manager import ConfigManager, NAME
 
 class MainController:
@@ -16,6 +16,8 @@ class MainController:
         try:
             raw_data = load_data(file_path)
             self.source_data = transform_time(raw_data)
+            street_types_config = self.config.config.get("street_types")
+            self.source_data = transform_address(self.source_data, street_types=street_types_config)
             self.source_path = file_path
             
             # Сохраняем папку данных

@@ -64,7 +64,15 @@ class ConfigManager:
             "color_theme": "blue", 
             "last_data_folder": str(Path.home()),
             "last_template_folder": str(Path.home()),
-            "last_output_folder": str(Path.home() / "Downloads")
+            "last_output_folder": str(Path.home() / "Downloads"),
+            "street_types": {
+                "ул.": ["улица", "ул"],
+                "микр-н.": ["микрорайон", "микр-н", "микр", "мкр"],
+                "тер.": ["территория", "тер"],
+                "пр-кт.": ["проспект", "пр-кт", "пр"],
+                "пер.": ["переулок", "пер"],
+                "ш.": ["шоссе", "ш"]
+            }
         }
         
         if belly_config.exists():
