@@ -7,36 +7,10 @@ import datetime
 range_regex = re.compile(r'^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$')
 single_regex = re.compile(r'^(\d{1,2}:\d{2})$')
 
-import json
-import sys
-import os
-
 # компиляция регулярок для адреса
-def get_resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
-street_types_path = get_resource_path(os.path.join("exe_belly", "street_types.json"))
-with open(street_types_path, 'r', encoding='utf-8') as f:
-    STREET_TYPES = json.load(f)
-
-STREET_LOOKUP = {
-    synonym: std_name 
-    for std_name, synonyms in STREET_TYPES.items() 
-    for synonym in synonyms
-}
-
-all_street_synonyms = sorted(STREET_LOOKUP.keys(), key=len, reverse=True)
-street_pattern = '|'.join(map(re.escape, all_street_synonyms))
-
 address_city_re = re.compile(r'(?:^|\s|,)(?:г\.|гор\.|г\s+|гор\s+)([А-Яа-яЁёA-Za-z\-]+)', re.IGNORECASE)
-address_street_re = re.compile(rf'(?:^|\s|,)({street_pattern})\.?\s+([^,]+)', re.IGNORECASE)
 address_house_re = re.compile(r'(?:^|\s|,)(?:д|дом)\.?\s*([0-9A-Za-zА-Яа-яЁё\/\-]+)', re.IGNORECASE)
 address_flat_re = re.compile(r'(?:^|\s|,)(?:кв|квартира)\.?\s*([0-9A-Za-zА-Яа-яЁё]+)', re.IGNORECASE)
-
 
 def load_data(file_path):
 	path = Path(file_path.strip(" '\"")) # НА ВСЯКИЙ убираем по краям пути мусор
