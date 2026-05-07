@@ -1,9 +1,24 @@
 import io
+import re
 import time
 from pathlib import Path
 from docxtpl import DocxTemplate
 from docx import Document
 from docxcompose.composer import Composer
+from jinja2 import DebugUndefined, UndefinedError, Environment
+
+
+def _safe_render(tpl, context):
+    jinja_env = Environment(undefined=DebugUndefined)
+    try:
+        tpl.render(context, jinja_env=jinja_env)
+    except UndefinedError as e:
+        match = re.search(r"'(.+)' is undefined", str(e))
+        name = match.group(1) if match else str(e)
+        raise ValueError(
+            f"Недопустимые символы в названии столбца: \"{name}\"\n"
+            f"Переименуйте столбец в Excel и в шаблоне (разрешены буквы, цифры, _)."
+        ) from e
 
 
 def shablon(data, path_to_shablon, output_path="./result.docx"):
@@ -12,7 +27,7 @@ def shablon(data, path_to_shablon, output_path="./result.docx"):
 
 	# первый док для инициализации
 	tpl = DocxTemplate(path_to_shablon)
-	tpl.render(data[0])
+	_safe_render(tpl, data[0])
 	stream = io.BytesIO()
 	tpl.save(stream)
 	composer = Composer(Document(stream))
@@ -20,7 +35,7 @@ def shablon(data, path_to_shablon, output_path="./result.docx"):
 	# остальные в цикле
 	for item in data[1:]:
 		tpl = DocxTemplate(path_to_shablon)
-		tpl.render(item)
+		_safe_render(tpl, item)
 		stream = io.BytesIO()
 		tpl.save(stream)
 
