@@ -15,6 +15,7 @@
 
 # Запуск
 
+(требуется Python 3.12.13)
 ```bash
 pip install -r requirements.txt
 python main.py
@@ -25,6 +26,8 @@ python main.py
 ```bash
 pip install -r requirements.txt
 ```
+(требуется Python 3.12.13)
+
 ```bash
 pyinstaller --noconfirm --onefile --windowed --icon "exe_belly/app_icon.ico" --add-data "exe_belly;exe_belly" --collect-all docxcompose --collect-all customtkinter --collect-all tkinterdnd2 --name "DocGenerator" main.py
 ```
