@@ -2,15 +2,11 @@ import pandas as pd
 from pathlib import Path
 import re
 import datetime
+from .address_module import AddressNormaliser
 
 # компиляция регулярок для времени
 range_regex = re.compile(r'^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$')
 single_regex = re.compile(r'^(\d{1,2}:\d{2})$')
-
-# компиляция регулярок для адреса
-address_city_re = re.compile(r'(?:^|\s|,)(?:г\.|гор\.|г\s+|гор\s+)([А-Яа-яЁёA-Za-z\-]+)', re.IGNORECASE)
-address_house_re = re.compile(r'(?:^|\s|,)(?:д|дом)\.?\s*([0-9A-Za-zА-Яа-яЁё\/\-]+)', re.IGNORECASE)
-address_flat_re = re.compile(r'(?:^|\s|,)(?:кв|квартира)\.?\s*([0-9A-Za-zА-Яа-яЁё]+)', re.IGNORECASE)
 
 def load_data(file_path):
 	path = Path(file_path.strip(" '\"")) # НА ВСЯКИЙ убираем по краям пути мусор
@@ -61,31 +57,18 @@ def transform_time(data, time_key = 'Время'):
 
 	return res
 
-def transform_address(data, street_types=None, address_key='Адрес', strict=False):
-	if not street_types:
-		street_types = {
-			"ул.": ["улица", "ул"],
-			"микр-н.": ["микрорайон", "микр-н", "микр", "мкр"],
-			"тер.": ["территория", "тер"],
-			"пр-кт.": ["проспект", "пр-кт", "пр"],
-			"пер.": ["переулок", "пер"],
-			"ш.": ["шоссе", "ш"]
-		}
-		
-	STREET_LOOKUP = {
-		synonym: std_name 
-		for std_name, synonyms in street_types.items() 
-		for synonym in synonyms
-	}
-	all_street_synonyms = sorted(STREET_LOOKUP.keys(), key=len, reverse=True)
-	street_pattern = '|'.join(map(re.escape, all_street_synonyms))
-	address_street_re = re.compile(rf'(?:^|\s|,)({street_pattern})\.?\s+([^,]+)', re.IGNORECASE)
+def transform_address(data, address_key='Адрес', strict=False, config_path=None):
+	# Инициализируем нормализатор. Если путь не передан, он сам попробует найти дефолтный.
+	try:
+		normalizer = AddressNormaliser(source=config_path)
+	except Exception as e:
+		print(f"Предупреждение: не удалось инициализировать AddressNormaliser: {e}")
+		return data
 
 	res = []
 	for item in data:
-		item = item.copy() # работаем с копией
+		item = item.copy()
 		
-		# Ищем подходящий ключ
 		actual_key = None
 		if strict:
 			if address_key in item:
@@ -98,36 +81,18 @@ def transform_address(data, street_types=None, address_key='Адрес', strict=
 					
 		if actual_key and isinstance(item.get(actual_key), str):
 			val = item[actual_key]
+			parsed = normalizer.parse(val)
 			
-			city_match = address_city_re.search(val)
-			street_match = address_street_re.search(val)
-			house_match = address_house_re.search(val)
-			flat_match = address_flat_re.search(val)
-			
-			city = city_match.group(1).strip() if city_match else None
-			street_type = ""
-			street_name = ""
-			if street_match:
-				st = street_match.group(1).strip().lower()
-				street_type = STREET_LOOKUP.get(st, f"{st}.")
-				street_name = street_match.group(2).strip()
-			
-			house = house_match.group(1).strip() if house_match else None
-			flat = flat_match.group(1).strip() if flat_match else None
-			
-			parts = []
-			if city:
-				city = city.title() if city.islower() else city
-				parts.append(f"г. {city}")
-			if street_name:
-				parts.append(f"{street_type} {street_name}")
-			if house:
-				parts.append(f"д. {house}")
-			if flat:
-				parts.append(f"кв. {flat}")
-			
-			if parts:
-				item[actual_key] = ", ".join(parts)
+			if parsed:
+				# Формируем строку: "лейбл значение". Если лейбл "неизвестно", выводим только значение.
+				formatted_parts = []
+				for label, value in parsed:
+					if label == "неизвестно":
+						formatted_parts.append(value)
+					else:
+						formatted_parts.append(f"{label} {value}")
+				
+				item[actual_key] = ", ".join(formatted_parts)
 				
 		res.append(item)
 
@@ -137,11 +102,10 @@ def test():
 	from pprint import pprint as pp
 	
 	data = load_data("./test/data_example.xls")
-	data = transform_time(data, "Время") # переводит из "13:00-17:00" в "с 13:00 до 17:00"
-	data = transform_address(data, "Адрес") # форматирует адреса
+	data = transform_time(data, "Время")
+	data = transform_address(data, address_key="Адрес")
 	
 	pp(data)
-	pp(data[4]['Адрес'] if len(data) > 4 and 'Адрес' in data[4] else "Нет адреса")
 
 if __name__ == "__main__":
 	test()

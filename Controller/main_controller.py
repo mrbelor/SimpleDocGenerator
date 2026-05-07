@@ -16,8 +16,11 @@ class MainController:
         try:
             raw_data = load_data(file_path)
             self.source_data = transform_time(raw_data)
-            street_types_config = self.config.config.get("street_types")
-            self.source_data = transform_address(self.source_data, street_types=street_types_config)
+
+            # Передаем путь к конфигу адресов из AppData
+            addr_cfg_path = str(self.config.address_config_file)
+            self.source_data = transform_address(self.source_data, config_path=addr_cfg_path)
+
             self.source_path = file_path
             
             # Сохраняем папку данных

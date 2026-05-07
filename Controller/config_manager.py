@@ -12,13 +12,16 @@ class ConfigManager:
         self.app_dir = self._get_app_dir(NAME)
         self.templates_dir = self.app_dir / "templates"
         self.config_file = self.app_dir / "config.json"
+        self.address_config_file = self.app_dir / "address_config.json"
         self.belly_dir = self.resource_path("exe_belly")
 
         # Проверка наличия ВCEЙ папки в AppData
         if not self.app_dir.exists():
             self._initial_setup()
         else:
-            # На всякий случай гарантируем наличие подпапки шаблонов
+            # Гарантируем наличие конфига адресов
+            if not self.address_config_file.exists():
+                self._copy_address_config()
             self.templates_dir.mkdir(parents=True, exist_ok=True)
 
         self.defaults = self._load_belly_defaults()
@@ -33,6 +36,7 @@ class ConfigManager:
             base_path = os.path.abspath(".")
 
         return Path(os.path.join(base_path, relative_path))
+
     def _get_app_dir(self, app_name):
         if sys.platform == 'win32':
             base = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
@@ -41,6 +45,11 @@ class ConfigManager:
         else:
             base = Path.home() / '.config'
         return base / app_name
+
+    def _copy_address_config(self):
+        belly_addr_config = self.belly_dir / "address_config.json"
+        if belly_addr_config.exists():
+            shutil.copy(belly_addr_config, self.address_config_file)
 
     def _initial_setup(self):
         """Первый запуск: создание папок и копирование всего из belly"""
@@ -51,6 +60,9 @@ class ConfigManager:
         belly_config = self.belly_dir / "config.json"
         if belly_config.exists():
             shutil.copy(belly_config, self.config_file)
+
+        # Копируем конфиг адресов
+        self._copy_address_config()
 
         # Копируем шаблоны
         if self.belly_dir.exists():
@@ -64,21 +76,14 @@ class ConfigManager:
             "color_theme": "blue", 
             "last_data_folder": str(Path.home()),
             "last_template_folder": str(Path.home()),
-            "last_output_folder": str(Path.home() / "Downloads"),
-            "street_types": {
-                "ул.": ["улица", "ул"],
-                "микр-н.": ["микрорайон", "микр-н", "микр", "мкр"],
-                "тер.": ["территория", "тер"],
-                "пр-кт.": ["проспект", "пр-кт", "пр"],
-                "пер.": ["переулок", "пер"],
-                "ш.": ["шоссе", "ш"]
-            }
+            "last_output_folder": str(Path.home() / "Downloads")
         }
         
         if belly_config.exists():
             try:
                 with open(belly_config, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                    # Объединяем дефолты и то что в файле (если файла нет - просто дефолты)
                     return {**base_defaults, **data}
             except Exception:
                 pass
