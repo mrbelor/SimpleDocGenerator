@@ -74,7 +74,7 @@ class AddressNormaliser:
 				if info:
 					parts.append((info["label"], val.strip(), info["level"]))
 		parts.sort(key=lambda x: x[2])
-		return [(label, value) for label, value, _ in parts]
+		return [(label, value.title()) for label, value, _ in parts]
 
 
 def main():

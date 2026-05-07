@@ -2,7 +2,11 @@ import pandas as pd
 from pathlib import Path
 import re
 import datetime
-from .address_module import AddressNormaliser
+import os
+try:
+    from .address_module import AddressNormaliser
+except ImportError:
+    from address_module import AddressNormaliser
 
 # компиляция регулярок для времени
 range_regex = re.compile(r'^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$')
@@ -62,8 +66,8 @@ def transform_address(data, address_key='Адрес', strict=False, config_path=
 	try:
 		normalizer = AddressNormaliser(source=config_path)
 	except Exception as e:
-		print(f"Предупреждение: не удалось инициализировать AddressNormaliser: {e}")
-		return data
+		print(f"Предупреждение: не удалось инициализировать AddressNormaliser:")
+		raise e
 
 	res = []
 	for item in data:
