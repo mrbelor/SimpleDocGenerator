@@ -1,16 +1,19 @@
-import re
-import json
+import os, re, json
 
 class AddressNormaliser:
 
-	def __init__(self, source="address_config.json"):
+	def __init__(self, source=None):
+
+		source = source or "address_config.json" # не вписываем в пременную по умолчанию, потмоу что иногда передаётся None
+
+		if not os.path.exists(source):
+			raise FileNotFoundError(f"конфиг не найден: {source}")
+
 		try:
 			with open(source, encoding="utf-8") as f:
 				cfg = json.load(f)
 			self.aliases = cfg["aliases"]
 			self.types   = cfg["types"]
-		except FileNotFoundError:
-			raise FileNotFoundError(f"конфиг не найден: {source}")
 		except KeyError as e:
 			raise KeyError(f"в конфиге отсутствует ключ: {e}")
 
@@ -76,6 +79,39 @@ class AddressNormaliser:
 		parts.sort(key=lambda x: x[2])
 		return [(label, value.title()) for label, value, _ in parts]
 
+def test_address_normalisation():
+    n = AddressNormaliser()
+
+    # обычная улица
+    assert n.parse("ул Чапаева, д. 38, кв. 15, г Саратов, обл Саратовская") == [
+        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('ул.', 'Чапаева'), ('д.', '38'), ('кв.', '15')
+    ]
+
+    # территория
+    assert n.parse("тер Соколовая гора, д. 102, кв. 7, г Саратов, обл Саратовская") == [
+        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('тер.', 'Соколовая Гора'), ('д.', '102'), ('кв.', '7')
+    ]
+
+    # микрорайон
+    assert n.parse("мкр Солнечный, д. 5, кв. 112, г Саратов, обл Саратовская") == [
+        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('мкр.', 'Солнечный'), ('д.', '5'), ('кв.', '112')
+    ]
+
+    # многословная улица
+    assert n.parse("ул Архангела Михаила, д. 175, кв. 28, г Саратов, обл Саратовская") == [
+        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('ул.', 'Архангела Михаила'), ('д.', '175'), ('кв.', '28')
+    ]
+
+    # нераспознанный чанк ("озеро. Ячмень") → метка '?' сохраняется, остальное не ломается
+    result = n.parse("ул Архангела Михаила, д. 175, кв. 28, озеро. Ячмень, г Саратов, Саратовская область")
+    assert ('?', 'Озеро Ячмень') in result
+    assert ('ул.', 'Архангела Михаила') in result
+    assert ('г.', 'Саратов') in result
+
+    # пустая строка → пустой список
+    assert n.parse("") == []
+
+    print("test_address_normalisation: OK")
 
 def main():
 	n = AddressNormaliser()
@@ -85,4 +121,4 @@ def main():
 
 
 if __name__ == '__main__':
-	main()
+	test_address_normalisation()
