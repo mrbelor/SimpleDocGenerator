@@ -158,7 +158,7 @@ class tableGen(object):
 		Точка входа из shablon.py. Читает документ, если там есть {{:table}},
 		группирует данные и выполняет рендер.
 		"""
-		from docx.shared import Cm
+		from docx.shared import Cm, Pt
 		doc = Document(path_to_shablon)
 		has_table = False
 		for p in doc.paragraphs:
@@ -193,7 +193,7 @@ class tableGen(object):
 				table.allow_autofit = False
 				
 				# Задаем ширину колонок
-				widths = [Cm(1.5), Cm(4.5), Cm(10.5)]
+				widths = [Cm(1.0), Cm(3.0), Cm(14.5)]
 				for j, col in enumerate(table.columns):
 					col.width = widths[j]
 				
@@ -234,6 +234,14 @@ class tableGen(object):
 						datetime_str += f" в период {time_val} часов"
 						
 					row_cells[2].text = f"{addr_norm}\n{datetime_str}"
+
+				for row in table.rows:
+					for cell in row.cells:
+						for paragraph in cell.paragraphs:
+							paragraph.paragraph_format.space_after = Pt(0)
+							paragraph.paragraph_format.space_before = Pt(0)
+							for run in paragraph.runs:
+								run.font.name = 'Times New Roman'
 
 			stream = io.BytesIO()
 			doc.save(stream)
