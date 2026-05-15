@@ -21,8 +21,8 @@ class AddressNormaliser:
 		return self.aliases.get(tok.lower())
 
 	def _clean(self, s):
-		# убираем всё кроме кириллицы, цифр, дефиса и пробелов
-		return re.sub(r"[^\u0400-\u04ffа-яёА-ЯЁ0-9\-\s]", "", s).strip()
+		# убираем всё кроме кириллицы, латиницы, цифр, дефиса и пробелов
+		return re.sub(r"[^\u0400-\u04ffа-яёА-ЯЁa-zA-Z0-9\-\s]", "", s).strip()
 
 	def _tokenize(self, s):
 		# режем по пробелам и запятым, пустые строки не берём (чтоб нули не удалить)
@@ -62,7 +62,21 @@ class AddressNormaliser:
 			if m and self._resolve(m.group(1)):
 				canon = self._resolve(m.group(1))
 				return (canon, m.group(2))
-			# 6) Нераспознанный чанк
+				
+		# 5.5) Отлов почтового индекса без явного маркера
+		joined_tokens = "".join(tokens)
+		if 4 <= len(joined_tokens) <= 10:
+			# Индексы содержат цифры (и иногда буквы/дефисы, например 12345-6789, SW1W 0NY)
+			if re.match(r"^[a-zA-Z0-9\-]+$", joined_tokens) and len(re.findall(r"\d", joined_tokens)) >= 3:
+				if joined_tokens.isdigit():
+					# Если это только цифры, индекс обычно состоит из 5 или 6 цифр
+					if 5 <= len(joined_tokens) <= 6:
+						return ("индекс", " ".join(tokens))
+				else:
+					# Буквенно-цифровые индексы по всему миру
+					return ("индекс", " ".join(tokens).upper())
+
+		# 6) Нераспознанный чанк
 		return ("?", " ".join(tokens).lower())
 
 	def parse(self, raw):

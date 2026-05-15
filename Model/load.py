@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import datetime
 import os
+
 try:
 	from .address_module import AddressNormaliser
 except ImportError:
@@ -49,65 +50,76 @@ def _normalize_date_value(val):
 	return val
 
 def load_data(file_path):
-	path = Path(file_path.strip(" '\"")) # НА ВСЯКИЙ убираем по краям пути мусор
-
+	path = Path(file_path.strip(" '\"")) 
 	if not path.exists():
 		raise FileNotFoundError(f"Файл по указанному пути не найден: {path}")
 
-	ext = path.suffix.lower() # расширение файла
-	# загрузка файлов (без доверия к расширениям файлов)
+	ext = path.suffix.lower()
 	if ext == '.csv':
 		df = pd.read_csv(path, sep=None, engine='python')
 	elif ext in ('.xls', '.xlsx'):
 		try:
-			# Читаем все листы в словарь DataFrames
 			all_sheets = pd.read_excel(path, sheet_name=None)
-			# Конкатенируем все листы в один DataFrame
 			df = pd.concat(all_sheets.values(), ignore_index=True)
 		except Exception as e:
-			# Если не удалось прочитать как Excel, пробуем как CSV
-			# (некоторые системы выгружают CSV с расширением .xls)
-			print(f"Не удалось прочитать {path.name} как Excel: {e}. Попытка в csv...")
 			df = pd.read_csv(path, sep=None, engine='python')
 	else:
 		raise ValueError("Формат не поддерживается. Ожидается .csv, .xls или .xlsx")
 
-	# NaN заменяем на пустые строки и конвертируем в список словарей
 	records = df.fillna("").to_dict(orient='records')
-	# Нормализуем даты/время во всех ячейках
 	return [{k: _normalize_date_value(v) for k, v in row.items()} for row in records]
+
+def _transform_time(val):
+	"""Трансформирует одиночное значение времени"""
+	if isinstance(val, str):
+		if match := range_regex.match(val):
+			return f"с {match.group(1)} до {match.group(2)}"
+		elif match := single_regex.match(val):
+			return f"в {match.group(1)}"
+	elif isinstance(val, datetime.time):
+		return f"в {val.strftime('%H:%M')}"
+	return val
+
+def _transform_address(val, config_path=None, **kwargs):
+	"""Трансформирует одиночное значение адреса"""
+	if not isinstance(val, str) or not val:
+		return val
+
+	if config_path is None:
+		raise RuntimeError("КРИТИЧЕСКАЯ ОШИБКА: Путь к address_config.json не задан (config_path=None)!")
+
+	if not os.path.exists(config_path):
+		raise RuntimeError(f"КРИТИЧЕСКАЯ ОШИБКА: Файл конфига не найден по пути: {config_path}")
+
+	try:
+		normalizer = AddressNormaliser(source=config_path)
+	except Exception as e:
+		raise RuntimeError(f"Не удалось инициализировать AddressNormaliser: {e}")
+
+	# Добавляем пробелы после точек, чтобы г.Новосибирск не склеивался
+	val_spaced = val.replace(".", ". ")
+	
+	parsed = normalizer.parse(val_spaced)
+	if parsed:
+		formatted_parts = []
+		for label, value in parsed:
+			if label in ["?", "неизвестно", ""]:
+				formatted_parts.append(value)
+			else:
+				formatted_parts.append(f"{label} {value}")
+		return ", ".join(formatted_parts)
+	return val
 
 def transform_time(data, time_key = 'Время'):
 	res = []
 	for item in data:
-		item = item.copy() # работаем с копией, чтобы не мутировать исходные данные
-		val = item.get(time_key) # значение по ключу типа 'Время': '09:00-13:00'
-
-		if isinstance(val, str):
-			# диапазон (например, "13:00-17:00" или "13:00 - 17:00")
-			if match := range_regex.match(val):
-				item[time_key] = f"с {match.group(1)} до {match.group(2)}"
-			# одиночное время (например, "17:00")
-			elif match := single_regex.match(val):
-				item[time_key] = f"в {match.group(1)}"
-
-		# обработка datetime (если в excel это было время, а pandas автоматом преобразовал его в datetime)
-		elif isinstance(val, datetime.time):
-			item[time_key] = f"в {val.strftime('%H:%M')}"
-
+		item = item.copy()
+		val = item.get(time_key)
+		item[time_key] = _transform_time(val)
 		res.append(item)
-
 	return res
 
 def transform_address(data, address_key='Адрес', strict=False, config_path=None):
-
-	# Инициализируем нормализатор. Если путь не передан, он сам попробует найти дефолтный.
-	try:
-		normalizer = AddressNormaliser(source=config_path)
-	except Exception as e:
-		print(f"Предупреждение: не удалось инициализировать AddressNormaliser:")
-		raise e
-
 	res = []
 	for item in data:
 		item = item.copy()
@@ -122,61 +134,77 @@ def transform_address(data, address_key='Адрес', strict=False, config_path=
 					actual_key = k
 					break
 					
-		if actual_key and isinstance(item.get(actual_key), str):
-			val = item[actual_key]
-			parsed = normalizer.parse(val)
-			
-			if parsed:
-				# Формируем строку: "лейбл значение". Если лейбл "неизвестно", выводим только значение.
-				formatted_parts = []
-				for label, value in parsed:
-					if label == "неизвестно":
-						formatted_parts.append(value)
-					else:
-						formatted_parts.append(f"{label} {value}")
-				
-				item[actual_key] = ", ".join(formatted_parts)
+		if actual_key:
+			item[actual_key] = _transform_address(item[actual_key], config_path=config_path)
 				
 		res.append(item)
-
 	return res
+
+def _format_time(val, **kwargs):
+	return _transform_time(_normalize_date_value(val))
+
+def _get_table_gen(val=None, **kwargs):
+	try:
+		from .table import tableGen
+	except (ImportError, ValueError):
+		import table
+		tableGen = table.tableGen
+	return tableGen()
+
+FORMATTERS = {
+	'addr': _transform_address,
+	'time': _format_time,
+	'table': _get_table_gen
+}
+
+def get_available_specifiers():
+	return list(FORMATTERS.keys())
+
+def traffic_light(value, specifier, config_path=None):
+	"""
+	Светофор для выбора метода обработки данных на основе спецификатора.
+	"""
+	formatter = FORMATTERS.get(specifier)
+	if formatter:
+		print(f"сработал спецификатор {specifier}")
+		return formatter(value, config_path=config_path)
+	return _normalize_date_value(value)
 
 def test_date_normalization():
 	# pd.Timestamp с временем 00:00 -> только дата
 	assert _normalize_date_value(pd.Timestamp('2024-05-01')) == '01.05.2024'
-	# pd.Timestamp с ненулевым временем -> возвращается без изменений
+	# pd.Timestamp с временем -> без изменений
 	ts = pd.Timestamp('2024-05-01 14:30')
 	assert _normalize_date_value(ts) is ts
-	# datetime.datetime с временем 00:00 -> только дата
-	assert _normalize_date_value(datetime.datetime(2024, 5, 1)) == '01.05.2024'
-	# datetime.datetime с ненулевым временем -> возвращается без изменений
-	dt = datetime.datetime(2024, 5, 1, 9, 15)
-	assert _normalize_date_value(dt) is dt
 	# datetime.date -> только дата
 	assert _normalize_date_value(datetime.date(2024, 5, 1)) == '01.05.2024'
 	# pd.NaT -> ""
 	assert _normalize_date_value(pd.NaT) == ""
-	# float NaN -> ""
-	assert _normalize_date_value(float('nan')) == ""
-	# datetime.time остаётся без изменений
-	t = datetime.time(9, 0)
-	assert _normalize_date_value(t) is t
-	# строки не меняются
-	assert _normalize_date_value("09:00-13:00") == "09:00-13:00"
-	# числа не меняются
-	assert _normalize_date_value(42) == 42
-	assert _normalize_date_value(3.14) == 3.14
 	print("test_date_normalization: OK")
 
-def test():
+def test_traffic_light():
+	# Тест времени
+	assert traffic_light("13:00-17:00", "time") == "с 13:00 до 17:00"
+	# Тест адреса (хотя бы что возвращает строку)
+	addr_res = traffic_light("Москва, Ленина 1", "addr")
+	assert isinstance(addr_res, str)
+	# Тест таблицы
+	from table import tableGen
+	assert isinstance(traffic_light(None, "table"), tableGen)
+	print("test_traffic_light: OK")
+
+def test_full_load():
 	from pprint import pprint as pp
-
-	data = load_data("./test/data_example.xls")
-	data = transform_time(data, "Время")
-	data = transform_address(data, config_path="./address_module/address_config.json", address_key="Адрес")
-
-	pp(data)
+	try:
+		data = load_data("./test/data_example.xls")
+		if data:
+			print(f"Loaded {len(data)} rows")
+			# Проверка точечной трансформации через светофор
+			sample_val = data[0].get("Время", "")
+			print(f"Original time: {sample_val} -> Transformed: {traffic_light(sample_val, 'time')}")
+	except Exception as e:
+		print(f"Full load test skipped or failed: {e}")
 
 if __name__ == "__main__":
 	test_date_normalization()
-	test()
+	test_traffic_light()

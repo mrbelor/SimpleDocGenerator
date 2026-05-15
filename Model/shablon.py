@@ -6,12 +6,37 @@ from docxtpl import DocxTemplate
 from docx import Document
 from docxcompose.composer import Composer
 from jinja2 import DebugUndefined, UndefinedError, Environment
+import jinja2.exceptions
 
+class MyDocxTemplate(DocxTemplate):
+    def render_xml_part(self, src_xml, part, context, jinja_env):
+        # Поддержка {{Ключ:addr}}, {{Ключ:time}} и {{:table}}
+        # Заменяем двоеточия: {{Ключ:addr}} -> {{Ключ__addr}}, но {{:table}} -> {{__table}}
+        src_xml = re.sub(r'(\{\{[^}]*?):([^}]*?\}\})', r'\1__\2', src_xml)
+        return super().render_xml_part(src_xml, part, context, jinja_env)
 
-def _safe_render(tpl, context):
+def _safe_render(tpl, context, config_path=None):
     jinja_env = Environment(undefined=DebugUndefined)
+    
     try:
-        tpl.render(context, jinja_env=jinja_env)
+        from .load import traffic_light, get_available_specifiers
+    except ImportError:
+        from load import traffic_light, get_available_specifiers
+        
+    expanded_context = dict(context)
+    specifiers = get_available_specifiers()
+    
+    for spec in specifiers:
+        expanded_context[f"__{spec}"] = traffic_light(None, spec, config_path=config_path)
+
+    for k, v in context.items():
+        if isinstance(k, str) and not k.startswith("__"):
+            for spec in specifiers:
+                expanded_context[f"{k}__{spec}"] = traffic_light(v, spec, config_path=config_path)
+            expanded_context[f"{k}__raw"] = v
+            
+    try:
+        tpl.render(expanded_context, jinja_env=jinja_env)
     except UndefinedError as e:
         match = re.search(r"'(.+)' is undefined", str(e))
         name = match.group(1) if match else str(e)
@@ -19,23 +44,41 @@ def _safe_render(tpl, context):
             f"Недопустимые символы в названии столбца: \"{name}\"\n"
             f"Переименуйте столбец в Excel и в шаблоне (разрешены буквы, цифры, _)."
         ) from e
+    except jinja2.exceptions.TemplateSyntaxError as e:
+        raise ValueError(
+            f"Ошибка в шаблоне {{{{ ... }}}}: нельзя использовать пробелы.\n"
+            f"Замените пробелы на '_'. Например: {{{{Адрес_УК}}}}"
+        ) from e
 
 
-def shablon(data, path_to_shablon, output_path="./result.docx"):
+def shablon(data, path_to_shablon, output_path="./result.docx", config_path=None):
 	if not data: return
 	output_path = Path(output_path)
 
-	# первый док для инициализации
-	tpl = DocxTemplate(path_to_shablon)
-	_safe_render(tpl, data[0])
+	# Пытаемся обработать как таблицу (группировка по УК)
+	import sys
+	try:
+		from table import tableGen
+	except ImportError:
+		from .table import tableGen
+		
+	tg = tableGen()
+	# Передаем текущий модуль (sys.modules[__name__]), чтобы tableGen мог вызвать _safe_render
+	table_result = tg.process_table_logic(data, path_to_shablon, output_path, sys.modules[__name__], config_path=config_path)
+	if table_result:
+		return table_result
+
+	# Если {{:table}} нет в шаблоне, работает штатная логика: первый док для инициализации
+	tpl = MyDocxTemplate(path_to_shablon)
+	_safe_render(tpl, data[0], config_path=config_path)
 	stream = io.BytesIO()
 	tpl.save(stream)
 	composer = Composer(Document(stream))
 
 	# остальные в цикле
 	for item in data[1:]:
-		tpl = DocxTemplate(path_to_shablon)
-		_safe_render(tpl, item)
+		tpl = MyDocxTemplate(path_to_shablon)
+		_safe_render(tpl, item, config_path=config_path)
 		stream = io.BytesIO()
 		tpl.save(stream)
 
@@ -64,7 +107,7 @@ def test():
 
 	path_to_shablon = "./test/notif_shablon.docx"
 	
-	shablon(data, path_to_shablon)
+	shablon(data, path_to_shablon, config_path="./address_module/address_config.json")
 
 
 if __name__ == '__main__':

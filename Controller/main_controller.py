@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 from Model import load_data, transform_time, transform_address, shablon
 from .config_manager import ConfigManager, NAME
@@ -16,12 +17,11 @@ class MainController:
         try:
             raw_data = load_data(file_path)
             self.source_data = transform_time(raw_data)
-
-            # Передаем путь к конфигу адресов из AppData
+            self.source_path = file_path
+            
+            # Получаем путь к конфигу адресов из AppData
             addr_cfg_path = str(self.config.address_config_file)
             self.source_data = transform_address(self.source_data, config_path=addr_cfg_path)
-
-            self.source_path = file_path
             
             # Сохраняем папку данных
             self.config.config["last_data_folder"] = os.path.dirname(file_path)
@@ -29,6 +29,7 @@ class MainController:
             
             return True, f"Выбрано: {os.path.basename(file_path)}"
         except Exception as e:
+            traceback.print_exc()
             return False, f"Ошибка: {str(e)}"
 
     def get_templates(self):
@@ -91,9 +92,11 @@ class MainController:
 
         try:
             # Вызов генерации из Model
-            final_path = shablon(self.source_data, str(template_path), final_output_path)
+            addr_cfg_path = str(self.config.address_config_file)
+            final_path = shablon(self.source_data, str(template_path), final_output_path, config_path=addr_cfg_path)
             return True, f"Успешно сохранено"
         except Exception as e:
+            traceback.print_exc()
             return False, f"Ошибка: {str(e)}"
 
     def open_templates_folder(self):
@@ -125,6 +128,11 @@ class MainController:
             return "Не выбрана"
         
         # Если это ".", превращаем в абсолютный путь, чтобы вытянуть имя папки
+        abs_path = os.path.abspath(folder)
+        name = os.path.basename(abs_path)
+        
+        # На случай если мы в корне диска и basename пустой
+        return name if name else abs_path
         abs_path = os.path.abspath(folder)
         name = os.path.basename(abs_path)
         

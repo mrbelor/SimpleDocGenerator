@@ -23,6 +23,9 @@ class ConfigManager:
             if not self.address_config_file.exists():
                 self._copy_address_config()
             self.templates_dir.mkdir(parents=True, exist_ok=True)
+            
+        # Всегда актуализируем шаблоны при запуске
+        self._sync_templates()
 
         self.defaults = self._load_belly_defaults()
         self.config = self.load()
@@ -64,10 +67,21 @@ class ConfigManager:
         # Копируем конфиг адресов
         self._copy_address_config()
 
-        # Копируем шаблоны
-        if self.belly_dir.exists():
-            for item in self.belly_dir.glob("*.docx"):
-                shutil.copy(item, self.templates_dir)
+    def _sync_templates(self):
+        """Синхронизирует шаблоны из belly в AppData (добавляет новые, обновляет старые)"""
+        if not self.belly_dir.exists():
+            return
+            
+        for source_item in self.belly_dir.glob("**/*.docx"):
+            dest_item = self.templates_dir / source_item.name
+            
+            # Если файла нет в AppData - копируем
+            if not dest_item.exists():
+                shutil.copy2(source_item, dest_item)
+            else:
+                # Если файл есть, проверяем время изменения. Если в belly новее - перезаписываем
+                if source_item.stat().st_mtime > dest_item.stat().st_mtime:
+                    shutil.copy2(source_item, dest_item)
 
     def _load_belly_defaults(self):
         belly_config = self.belly_dir / "config.json"
