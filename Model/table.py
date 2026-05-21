@@ -1,280 +1,304 @@
-# this file is fully vibecoded
-from docx import Document
-from collections import defaultdict
+"""Генерация таблиц Word при наличии тега {{:table}} в шаблоне."""
+
 import datetime
 import io
 import re
+from collections import defaultdict
 
-class tableGen(object):
-	"""Класс для генерации таблиц и кастомной обработки в Word"""
-	def __init__(self, arg=None):
-		super(tableGen, self).__init__()
-		self.arg = arg
+from docx import Document
+from docx.shared import Cm, Pt
 
-	def _parse_date(self, date_str):
-		try:
-			return datetime.datetime.strptime(str(date_str).strip(), "%d.%m.%Y")
-		except Exception:
-			return None
 
-	def make_grouped_data(self, data_list):
-		groups = defaultdict(list)
-		for item in data_list:
-			uk = str(item.get("УК", "Неизвестная УК"))
-			groups[uk].append(item)
-		
-		result = []
-		for uk, items in groups.items():
-			dates = []
-			for i in items:
-				d_str = i.get("Дата", "")
-				d_obj = self._parse_date(d_str)
-				if d_obj:
-					dates.append(d_obj)
-			
-			if dates:
-				min_d = min(dates)
-				max_d = max(dates)
-				if min_d == max_d:
-					date_label = min_d.strftime("%d.%m.%Y")
-				else:
-					date_label = f"с {min_d.strftime('%d.%m.%Y')} по {max_d.strftime('%d.%m.%Y')}"
-			else:
-				date_label = str(items[0].get("Дата", ""))
+_TABLE_MARKER = "{{:table}}"
+_TABLE_COLS = 3
+_COL_WIDTHS = [Cm(1.0), Cm(3.0), Cm(14.5)]
+_HEADER_LABELS = ["№", "Лицевой счет абонента", "Полный адрес (город, улица, дом, квартира)"]
+_TABLE_FONT = "Times New Roman"
 
-			base_item = items[0].copy()
-			base_item["Дата"] = date_label
-			base_item["__table_records__"] = items
-			result.append(base_item)
-			
-		return result
+# Возможные ключи лицевого счёта (с пробелом и с подчёркиванием)
+_ACCOUNT_KEYS = ("Лицевой_счет", "Лицевой счет", "Лицевой счет абонента")
 
-	def castom_transform_addres(self, item, config_path=None):
-		"""
-		Пользовательская функция для сборки и нормализации адреса.
-		Вы можете изменить эту логику позже.
-		"""
-		try:
-			from .load import _transform_address
-		except ImportError:
-			from load import _transform_address
 
-		def is_valid(val):
-			if val is None:
-				return False
-			s = str(val).strip()
-			return bool(s and s.lower() not in ['nan', 'none'])
+class TableGenerator:
+    """Обрабатывает шаблоны с тегом {{:table}}: группирует данные и строит таблицу."""
 
-		addr_obj_raw = str(item.get("Адрес объекта", item.get("Адрес", item.get("Адрес_объекта", "")))).strip()
-		
-		# Делаем каждое слово заглавным, но сохраняем регистр для маркеров
-		words = addr_obj_raw.split()
-		capitalized_words = []
-		for w in words:
-			if w.lower() in ["д.", "кв.", "ул.", "г.", "с.", "п.", "рп."]:
-				capitalized_words.append(w.lower())
-			else:
-				# Обработка дефисов: РОСТОВ-НА-ДОНУ -> Ростов-На-Дону
-				if "-" in w:
-					capitalized_words.append("-".join(part.capitalize() for part in w.split("-")))
-				else:
-					capitalized_words.append(w.capitalize())
-		
-		addr_obj = " ".join(capitalized_words)
-		
-		# Проверяем, является ли адрес "полным" (содержит запятые или маркеры д. / кв.)
-		is_full = "," in addr_obj or " д." in addr_obj.lower() or " кв." in addr_obj.lower()
-		
-		if is_full:
-			# Если это уже готовая строка, не добавляем "г. НП" и "ул." вручную
-			addr_str = addr_obj
-			# Но если дом и квартира лежат в отдельных полях, докидываем их
-			if is_valid(item.get("Дом")) and f"д. {item['Дом']}" not in addr_str:
-				addr_str += f", д. {item['Дом']}"
-			if is_valid(item.get("Квартира")) and f"кв. {item['Квартира']}" not in addr_str:
-				kv = str(item['Квартира'])
-				if kv.endswith('.0'): kv = kv[:-2]
-				addr_str += f", кв. {kv}"
-				
-			addr_norm = _transform_address(addr_str, config_path=config_path)
-			return addr_norm if addr_norm else addr_str
+    def process_table_logic(self, data_list: list, path_to_template, output_path, template_module, config_path=None):
+        """
+        Точка входа из shablon.py.
+        Возвращает Path к файлу если шаблон содержит {{:table}}, иначе False.
+        """
+        if not self._template_has_table_marker(path_to_template):
+            return False
 
-		# Если это просто название улицы (например "ВОСХОД УЛ." или "КИРОВА")
-		import re
-		clean_street = re.sub(r'(?i)\bул(?:ица)?\.?', '', addr_obj).strip()
-		
-		if clean_street:
-			addr_str = f"ул. {clean_street}"
-		else:
-			addr_str = ""
+        grouped = self._make_grouped_data(data_list)
 
-		# Добавляем дом
-		if is_valid(item.get("Дом")):
-			дом = str(item['Дом'])
-			if дом.endswith('.0'): дом = дом[:-2]
-			addr_str += f", д. {дом}"
-			
-		# Добавляем квартиру
-		if is_valid(item.get("Квартира")):
-			кв = str(item['Квартира'])
-			if кв.endswith('.0'): кв = кв[:-2]
-			addr_str += f", кв. {кв}"
-		
-		# Обработка поля НП
-		np_val = str(item.get("НП", "")).strip()
-		np_str = ""
-		if np_val and is_valid(np_val):
-			np_words = np_val.split()
-			np_clean_words = []
-			prefix = "г." # По умолчанию
-			
-			for w in np_words:
-				w_lower = w.lower().strip(".")
-				if w_lower in ["с", "село"]:
-					prefix = "с."
-				elif w_lower in ["п", "пос", "поселок", "посёлок"]:
-					prefix = "п."
-				elif w_lower in ["рп", "рабпос"]:
-					prefix = "рп."
-				elif w_lower in ["г", "город"]:
-					prefix = "г."
-				else:
-					np_clean_words.append(w.capitalize())
-			
-			if np_clean_words:
-				np_str = f"{prefix} {' '.join(np_clean_words)}"
+        from docxcompose.composer import Composer
+        composer = None
 
-		if np_str:
-			if addr_str:
-				addr_str = f"{np_str}, {addr_str}"
-			else:
-				addr_str = np_str
-		
-		addr_norm = _transform_address(addr_str, config_path=config_path)
-		return addr_norm if addr_norm else addr_str
+        for group_item in grouped:
+            out_stream = self._render_group(group_item, path_to_template, template_module, config_path)
 
-	def process_table_logic(self, data_list, path_to_shablon, output_path, shablon_module, config_path=None):
-		"""
-		Точка входа из shablon.py. Читает документ, если там есть {{:table}},
-		группирует данные и выполняет рендер.
-		"""
-		from docx.shared import Cm, Pt
-		doc = Document(path_to_shablon)
-		has_table = False
-		for p in doc.paragraphs:
-			if '{{:table}}' in p.text:
-				has_table = True
-				break
-		
-		if not has_table:
-			return False
+            if composer is None:
+                composer = Composer(Document(out_stream))
+            else:
+                composer.doc.add_page_break()
+                composer.append(Document(out_stream))
 
-		grouped_data = self.make_grouped_data(data_list)
-		
-		from docxcompose.composer import Composer
-		composer = None
-		
-		for idx, group_item in enumerate(grouped_data):
-			doc = Document(path_to_shablon)
-			
-			target_p = None
-			for p in doc.paragraphs:
-				if '{{:table}}' in p.text:
-					target_p = p
-					break
-			
-			if target_p:
-				target_p.text = target_p.text.replace('{{:table}}', '')
-				
-				records = group_item["__table_records__"]
-				table = doc.add_table(rows=1, cols=3)
-				table.style = 'Table Grid'
-				table.autofit = False
-				table.allow_autofit = False
-				
-				# Задаем ширину колонок
-				widths = [Cm(1.0), Cm(3.0), Cm(14.5)]
-				for j, col in enumerate(table.columns):
-					col.width = widths[j]
-				
-				tbl_p = target_p._p
-				tbl_p.addnext(table._tbl)
+        final_path = self._resolve_final_path(output_path)
+        composer.save(final_path)
+        return final_path
 
-				hdr_cells = table.rows[0].cells
-				hdr_cells[0].text = "№"
-				hdr_cells[1].text = "Лицевой счет абонента"
-				hdr_cells[2].text = "Полный адрес (город, улица, дом, квартира)"
-				
-				for j, cell in enumerate(hdr_cells):
-					cell.width = widths[j]
-				
-				for i, item in enumerate(records):
-					row_cells = table.add_row().cells
-					for j, cell in enumerate(row_cells):
-						cell.width = widths[j]
+    # ------------------------------------------------------------------
+    # Группировка данных по УК
+    # ------------------------------------------------------------------
 
-					row_cells[0].text = str(i + 1)
-					
-					# Поддержка ключа с пробелом и с подчеркиванием
-					lc = item.get("Лицевой_счет", item.get("Лицевой счет", item.get("Лицевой счет абонента", "")))
-					row_cells[1].text = str(lc)
-					
-					addr_norm = self.castom_transform_addres(item, config_path=config_path)
-					
-					date_val = str(item.get("Дата", ""))
-					time_val = str(item.get("Время", ""))
-					if not time_val:
-						for k, v in item.items():
-							if isinstance(k, str) and 'Unnamed' in k and re.match(r'^\d{2}:\d{2}-\d{2}:\d{2}$', str(v)):
-								time_val = str(v)
-								break
-					
-					datetime_str = f"{date_val}"
-					if time_val:
-						datetime_str += f" в период {time_val} часов"
-						
-					row_cells[2].text = f"{addr_norm}\n{datetime_str}"
+    def _make_grouped_data(self, data_list: list) -> list:
+        """Группирует строки по полю 'УК', вычисляет диапазон дат для каждой группы."""
+        groups: dict = defaultdict(list)
+        for item in data_list:
+            groups[str(item.get("УК", "Неизвестная УК"))].append(item)
 
-				for row in table.rows:
-					for cell in row.cells:
-						for paragraph in cell.paragraphs:
-							paragraph.paragraph_format.space_after = Pt(0)
-							paragraph.paragraph_format.space_before = Pt(0)
-							for run in paragraph.runs:
-								run.font.name = 'Times New Roman'
+        result = []
+        for uk, items in groups.items():
+            date_label = self._build_date_label(items)
+            base_item = items[0].copy()
+            base_item["Дата"] = date_label
+            base_item["__table_records__"] = items
+            result.append(base_item)
+        return result
 
-			stream = io.BytesIO()
-			doc.save(stream)
-			stream.seek(0)
-			
-			tpl = shablon_module.MyDocxTemplate(stream)
-			shablon_module._safe_render(tpl, group_item, config_path=config_path)
-			
-			out_stream = io.BytesIO()
-			tpl.save(out_stream)
-			out_stream.seek(0)
-			
-			if composer is None:
-				composer = Composer(Document(out_stream))
-			else:
-				composer.doc.add_page_break()
-				composer.append(Document(out_stream))
-				
-		import time as t
-		from pathlib import Path
-		output_path = Path(output_path)
-		if output_path.exists():
-			new_stem = f"{output_path.stem}_{int(t.time())}"
-			final_path = output_path.with_stem(new_stem)
-		else:
-			final_path = output_path
+    def _build_date_label(self, items: list) -> str:
+        dates = [self._parse_date(i.get("Дата", "")) for i in items]
+        dates = [d for d in dates if d]
+        if not dates:
+            return str(items[0].get("Дата", ""))
+        min_d, max_d = min(dates), max(dates)
+        if min_d == max_d:
+            return min_d.strftime("%d.%m.%Y")
+        return f"с {min_d.strftime('%d.%m.%Y')} по {max_d.strftime('%d.%m.%Y')}"
 
-		composer.save(final_path)
-		print("Done grouped tables!")
-		return final_path
+    @staticmethod
+    def _parse_date(date_str: str) -> datetime.datetime | None:
+        try:
+            return datetime.datetime.strptime(str(date_str).strip(), "%d.%m.%Y")
+        except (ValueError, TypeError):
+            return None
 
-def main():
-	pass
+    # ------------------------------------------------------------------
+    # Рендер одной группы
+    # ------------------------------------------------------------------
 
-if __name__ == '__main__':
-	main()
+    def _render_group(self, group_item: dict, path_to_template, template_module, config_path) -> io.BytesIO:
+        doc = Document(path_to_template)
+        marker_paragraph = self._find_marker_paragraph(doc)
+
+        if marker_paragraph:
+            marker_paragraph.text = marker_paragraph.text.replace(_TABLE_MARKER, "")
+            table = self._build_table(doc, group_item["__table_records__"], config_path)
+            marker_paragraph._p.addnext(table._tbl)
+
+        stream = io.BytesIO()
+        doc.save(stream)
+        stream.seek(0)
+
+        tpl = template_module.MyDocxTemplate(stream)
+        template_module._safe_render(tpl, group_item, config_path=config_path)
+
+        out = io.BytesIO()
+        tpl.save(out)
+        out.seek(0)
+        return out
+
+    # ------------------------------------------------------------------
+    # Построение таблицы
+    # ------------------------------------------------------------------
+
+    def _build_table(self, doc: Document, records: list, config_path) -> object:
+        table = doc.add_table(rows=1, cols=_TABLE_COLS)
+        table.style = "Table Grid"
+        table.autofit = False
+        table.allow_autofit = False
+
+        for j, col in enumerate(table.columns):
+            col.width = _COL_WIDTHS[j]
+
+        self._fill_header(table, _COL_WIDTHS)
+
+        for i, item in enumerate(records):
+            self._add_data_row(table, i, item, config_path, _COL_WIDTHS)
+
+        self._apply_cell_style(table)
+        return table
+
+    @staticmethod
+    def _fill_header(table, col_widths: list) -> None:
+        header_cells = table.rows[0].cells
+        for j, (cell, label) in enumerate(zip(header_cells, _HEADER_LABELS)):
+            cell.text = label
+            cell.width = col_widths[j]
+
+    def _add_data_row(self, table, row_index: int, item: dict, config_path, col_widths: list) -> None:
+        row_cells = table.add_row().cells
+
+        for j, cell in enumerate(row_cells):
+            cell.width = col_widths[j]
+
+        row_cells[0].text = str(row_index + 1)
+        row_cells[1].text = str(self._get_account_number(item))
+        row_cells[2].text = self._build_address_cell_text(item, config_path)
+
+    @staticmethod
+    def _get_account_number(item: dict) -> str:
+        for key in _ACCOUNT_KEYS:
+            if key in item:
+                return str(item[key])
+        return ""
+
+    def _build_address_cell_text(self, item: dict, config_path) -> str:
+        address = self._normalise_address(item, config_path)
+        date_val = str(item.get("Дата", ""))
+        time_val = self._extract_time(item)
+
+        cell_text = address
+        if time_val:
+            cell_text += f"\n{date_val} в период {time_val} часов"
+        else:
+            cell_text += f"\n{date_val}"
+        return cell_text
+
+    def _normalise_address(self, item: dict, config_path) -> str:
+        """Собирает и нормализует адрес из полей записи."""
+        from .load import _transform_address_value
+
+        addr_raw = str(item.get("Адрес объекта", item.get("Адрес", item.get("Адрес_объекта", "")))).strip()
+        addr_formatted = self._capitalise_address(addr_raw)
+
+        is_full = "," in addr_formatted or " д." in addr_formatted.lower() or " кв." in addr_formatted.lower()
+
+        if is_full:
+            addr_str = self._append_house_and_apt(addr_formatted, item)
+        else:
+            addr_str = self._build_address_from_parts(addr_formatted, item)
+
+        normalised = _transform_address_value(addr_str, config_path=config_path)
+        return normalised if normalised else addr_str
+
+    @staticmethod
+    def _capitalise_address(addr_raw: str) -> str:
+        """Делает первую букву каждого слова заглавной, сохраняет маркеры типа 'д.', 'ул.'."""
+        low_markers = {"д.", "кв.", "ул.", "г.", "с.", "п.", "рп."}
+        words = []
+        for word in addr_raw.split():
+            if word.lower() in low_markers:
+                words.append(word.lower())
+            elif "-" in word:
+                words.append("-".join(part.capitalize() for part in word.split("-")))
+            else:
+                words.append(word.capitalize())
+        return " ".join(words)
+
+    @staticmethod
+    def _is_valid(val) -> bool:
+        if val is None:
+            return False
+        return bool(str(val).strip() and str(val).strip().lower() not in ("nan", "none"))
+
+    def _append_house_and_apt(self, addr_str: str, item: dict) -> str:
+        house = item.get("Дом")
+        apt = item.get("Квартира")
+        if self._is_valid(house) and f"д. {house}" not in addr_str:
+            addr_str += f", д. {self._clean_float(str(house))}"
+        if self._is_valid(apt) and f"кв. {apt}" not in addr_str:
+            addr_str += f", кв. {self._clean_float(str(apt))}"
+        return addr_str
+
+    def _build_address_from_parts(self, addr_formatted: str, item: dict) -> str:
+        clean_street = re.sub(r"(?i)\bул(?:ица)?\.?", "", addr_formatted).strip()
+        addr_str = f"ул. {clean_street}" if clean_street else ""
+
+        house_num = item.get("Дом")
+        apt_num = item.get("Квартира")
+
+        if self._is_valid(house_num):
+            addr_str += f", д. {self._clean_float(str(house_num))}"
+        if self._is_valid(apt_num):
+            addr_str += f", кв. {self._clean_float(str(apt_num))}"
+
+        settlement = self._build_settlement_prefix(item)
+        if settlement:
+            addr_str = f"{settlement}, {addr_str}" if addr_str else settlement
+
+        return addr_str
+
+    @staticmethod
+    def _build_settlement_prefix(item: dict) -> str:
+        """Строит префикс населённого пункта: 'г. Саратов', 'с. Ивановка' и т.п."""
+        np_val = str(item.get("НП", "")).strip()
+        if not np_val or np_val.lower() in ("nan", "none", ""):
+            return ""
+
+        prefix_map = {
+            frozenset({"с", "село"}): "с.",
+            frozenset({"п", "пос", "поселок", "посёлок"}): "п.",
+            frozenset({"рп", "рабпос"}): "рп.",
+            frozenset({"г", "город"}): "г.",
+        }
+        prefix = "г."
+        clean_words = []
+
+        for word in np_val.split():
+            word_lower = word.lower().strip(".")
+            matched = next((p for keys, p in prefix_map.items() if word_lower in keys), None)
+            if matched:
+                prefix = matched
+            else:
+                clean_words.append(word.capitalize())
+
+        return f"{prefix} {' '.join(clean_words)}" if clean_words else ""
+
+    @staticmethod
+    def _clean_float(val: str) -> str:
+        """Убирает '.0' у числел, которые pandas читает как float: '42.0' -> '42'."""
+        return val[:-2] if val.endswith(".0") else val
+
+    @staticmethod
+    def _extract_time(item: dict) -> str:
+        """Вытаскивает значение времени из записи, включая колонки Unnamed."""
+        time_val = str(item.get("Время", ""))
+        if not time_val:
+            for k, v in item.items():
+                if isinstance(k, str) and "Unnamed" in k and re.match(r"^\d{2}:\d{2}-\d{2}:\d{2}$", str(v)):
+                    return str(v)
+        return time_val
+
+    # ------------------------------------------------------------------
+    # Вспомогательные
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _template_has_table_marker(path_to_template) -> bool:
+        doc = Document(path_to_template)
+        return any(_TABLE_MARKER in p.text for p in doc.paragraphs)
+
+    @staticmethod
+    def _find_marker_paragraph(doc: Document):
+        return next((p for p in doc.paragraphs if _TABLE_MARKER in p.text), None)
+
+    @staticmethod
+    def _apply_cell_style(table) -> None:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    paragraph.paragraph_format.space_after = Pt(0)
+                    paragraph.paragraph_format.space_before = Pt(0)
+                    for run in paragraph.runs:
+                        run.font.name = _TABLE_FONT
+
+    @staticmethod
+    def _resolve_final_path(output_path) -> object:
+        import time
+        from pathlib import Path
+        output_path = Path(output_path)
+        if output_path.exists():
+            return output_path.with_stem(f"{output_path.stem}_{int(time.time())}")
+        return output_path

@@ -1,140 +1,154 @@
+"""Контроллер: связывает View с Model и ConfigManager."""
+
 import os
 import sys
-import time
 import traceback
 from pathlib import Path
-from Model import load_data, transform_time, transform_address, shablon
-from .config_manager import ConfigManager, NAME
+
+from Model import load_data, transform_time, transform_address, generate_documents
+from .config_manager import ConfigManager
+from constants import APP_NAME, ERR_NO_DATA, ERR_NO_TEMPLATE, ERR_TEMPLATE_FILE_MISSING, TEMPLATE_PLACEHOLDER
+
 
 class MainController:
-    def __init__(self):
-        self.config = ConfigManager()
-        self.name = NAME
-        self.source_data = None
-        self.source_path = None
+    """Основной контроллер приложения."""
 
-    def load_source(self, file_path):
+    def __init__(self) -> None:
+        self.config = ConfigManager()
+        self.name = APP_NAME
+        self.source_data: list | None = None
+        self.source_path: str | None = None
+
+    # ------------------------------------------------------------------
+    # Данные
+    # ------------------------------------------------------------------
+
+    def load_source(self, file_path: str) -> tuple:
+        """Загружает Excel/CSV, трансформирует время и адреса."""
         try:
             raw_data = load_data(file_path)
-            self.source_data = transform_time(raw_data)
+            data = transform_time(raw_data)
+
+            addr_cfg = str(self.config.address_config_file)
+            data = transform_address(data, config_path=addr_cfg)
+
+            self.source_data = data
             self.source_path = file_path
-            
-            # Получаем путь к конфигу адресов из AppData
-            addr_cfg_path = str(self.config.address_config_file)
-            self.source_data = transform_address(self.source_data, config_path=addr_cfg_path)
-            
-            # Сохраняем папку данных
             self.config.config["last_data_folder"] = os.path.dirname(file_path)
             self.config.save()
-            
+
             return True, f"Выбрано: {os.path.basename(file_path)}"
         except Exception as e:
             traceback.print_exc()
-            return False, f"Ошибка: {str(e)}"
+            return False, f"Ошибка: {e}"
 
-    def get_templates(self):
+    # ------------------------------------------------------------------
+    # Шаблоны
+    # ------------------------------------------------------------------
+
+    def get_templates(self) -> list:
         return self.config.get_templates()
 
-    def add_template(self, path):
+    def add_template(self, path: str) -> tuple:
         success, name = self.config.add_template(path)
         if success:
-            # Сохраняем папку шаблонов
             self.config.config["last_template_folder"] = os.path.dirname(path)
             self.config.save()
         return success, name
 
-    def remove_template(self, name):
+    def remove_template(self, name: str) -> bool:
         return self.config.remove_template(name)
 
-    def get_suggested_filename(self, template_name):
-        template_names = self.config.config.get("template_names", {})
-        if template_name in template_names:
-            return template_names[template_name]
-        
-        # Убираем расширение у оригинального шаблона
-        base_tmpl = os.path.splitext(template_name)[0]
-        return f"Результат_{base_tmpl}"
+    def get_suggested_filename(self, template_name: str) -> str:
+        saved = self.config.config.get("template_names", {})
+        if template_name in saved:
+            return saved[template_name]
+        base = os.path.splitext(template_name)[0]
+        return f"Результат_{base}"
 
-    def generate_document(self, template_name, custom_path=None):
-        if custom_path:
-            # Сохраняем папку сохранения в любом случае
-            self.config.config["last_output_folder"] = os.path.dirname(custom_path)
-            
-            # Ассоциативное запоминание имени (без расширения)
-            base_name = os.path.splitext(os.path.basename(custom_path))[0]
-            if "template_names" not in self.config.config:
-                self.config.config["template_names"] = {}
-            self.config.config["template_names"][template_name] = base_name
-            self.config.save()
-            
-            final_output_path = custom_path
-        else:
-            save_dir = Path(self.config.config["last_output_folder"])
-            if not save_dir.exists():
-                save_dir.mkdir(parents=True, exist_ok=True)
-                
-            base_name = self.get_suggested_filename(template_name)
-            final_output_path = str(save_dir / f"{base_name}.docx")
-            
-            # Если файл существует, приписываем unix timestamp
-            if os.path.exists(final_output_path):
-                unix_time = int(time.time())
-                final_output_path = str(save_dir / f"{base_name}_{unix_time}.docx")
+    # ------------------------------------------------------------------
+    # Генерация
+    # ------------------------------------------------------------------
 
+    def generate_document(self, template_name: str, custom_path: str | None = None) -> tuple:
+        """Генерирует документ из шаблона и загруженных данных."""
         if not self.source_data:
-            return False, "Нет данных!"
-        if not template_name or template_name == "Шаблон не выбран":
-            return False, "Шаблон не выбран!"
-        
+            return False, ERR_NO_DATA
+        if not template_name or template_name == TEMPLATE_PLACEHOLDER:
+            return False, ERR_NO_TEMPLATE
+
         template_path = self.config.templates_dir / template_name
         if not template_path.exists():
-            return False, "Файл шаблона не найден!"
+            return False, ERR_TEMPLATE_FILE_MISSING
+
+        output_path = self._resolve_output_path(template_name, custom_path)
+        self._persist_output_meta(template_name, output_path, custom_path)
 
         try:
-            # Вызов генерации из Model
-            addr_cfg_path = str(self.config.address_config_file)
-            final_path = shablon(self.source_data, str(template_path), final_output_path, config_path=addr_cfg_path)
-            return True, f"Успешно сохранено"
+            addr_cfg = str(self.config.address_config_file)
+            generate_documents(self.source_data, str(template_path), output_path, config_path=addr_cfg)
+            return True, "Успешно сохранено"
         except Exception as e:
             traceback.print_exc()
-            return False, f"Ошибка: {str(e)}"
+            return False, f"Ошибка: {e}"
 
-    def open_templates_folder(self):
+    def _resolve_output_path(self, template_name: str, custom_path: str | None) -> str:
+        if custom_path:
+            return custom_path
+
+        save_dir = Path(self.config.config["last_output_folder"])
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        base_name = self.get_suggested_filename(template_name)
+        candidate = save_dir / f"{base_name}.docx"
+
+        if candidate.exists():
+            import time
+            candidate = save_dir / f"{base_name}_{int(time.time())}.docx"
+
+        return str(candidate)
+
+    def _persist_output_meta(self, template_name: str, output_path: str, custom_path: str | None) -> None:
+        """Запоминает папку сохранения и ассоциирует имя файла с шаблоном."""
+        self.config.config["last_output_folder"] = os.path.dirname(output_path)
+
+        if custom_path:
+            base_name = os.path.splitext(os.path.basename(custom_path))[0]
+            self.config.config.setdefault("template_names", {})[template_name] = base_name
+
+        self.config.save()
+
+    # ------------------------------------------------------------------
+    # UI-хелперы
+    # ------------------------------------------------------------------
+
+    def open_templates_folder(self) -> None:
         path = str(self.config.templates_dir)
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             os.startfile(path)
-        elif sys.platform == 'darwin':
+        elif sys.platform == "darwin":
             os.system(f'open "{path}"')
         else:
             os.system(f'xdg-open "{path}"')
-            
-    def set_appearance_mode(self, mode):
+
+    def set_appearance_mode(self, mode: str) -> None:
         self.config.config["appearance_mode"] = mode.lower()
         self.config.save()
 
-    # Вспомогательные методы для получения путей
-    def get_last_data_folder(self):
+    def get_last_data_folder(self) -> str:
         return self.config.config.get("last_data_folder", str(Path.home()))
 
-    def get_last_template_folder(self):
+    def get_last_template_folder(self) -> str:
         return self.config.config.get("last_template_folder", str(Path.home()))
 
-    def get_last_output_folder(self):
+    def get_last_output_folder(self) -> str:
         return self.config.config.get("last_output_folder", str(Path.home() / "Downloads"))
 
-    def get_save_folder_name(self):
+    def get_save_folder_name(self) -> str:
+        """Возвращает читаемое имя папки сохранения."""
         folder = self.get_last_output_folder()
         if not folder:
             return "Не выбрана"
-        
-        # Если это ".", превращаем в абсолютный путь, чтобы вытянуть имя папки
         abs_path = os.path.abspath(folder)
         name = os.path.basename(abs_path)
-        
-        # На случай если мы в корне диска и basename пустой
-        return name if name else abs_path
-        abs_path = os.path.abspath(folder)
-        name = os.path.basename(abs_path)
-        
-        # На случай если мы в корне диска и basename пустой
         return name if name else abs_path

@@ -1,147 +1,138 @@
+"""Управление конфигурацией приложения и шаблонами."""
+
 import json
 import os
 import shutil
 import sys
 from pathlib import Path
 
-# Глобальное название программы
-NAME = "DocGenerator"
+from constants import APP_NAME
+
 
 class ConfigManager:
-    def __init__(self):
-        self.app_dir = self._get_app_dir(NAME)
+    """Отвечает за хранение настроек и управление файлами шаблонов."""
+
+    _DEFAULTS: dict = {
+        "appearance_mode": "dark",
+        "color_theme": "blue",
+        "last_data_folder": str(Path.home()),
+        "last_template_folder": str(Path.home()),
+        "last_output_folder": str(Path.home() / "Downloads"),
+    }
+
+    def __init__(self) -> None:
+        self.app_dir = self._get_app_dir(APP_NAME)
         self.templates_dir = self.app_dir / "templates"
         self.config_file = self.app_dir / "config.json"
         self.address_config_file = self.app_dir / "address_config.json"
         self.belly_dir = self.resource_path("exe_belly")
 
-        # Проверка наличия ВCEЙ папки в AppData
         if not self.app_dir.exists():
             self._initial_setup()
         else:
-            # Гарантируем наличие конфига адресов
             if not self.address_config_file.exists():
                 self._copy_address_config()
             self.templates_dir.mkdir(parents=True, exist_ok=True)
-            
-        # Всегда актуализируем шаблоны при запуске
+
         self._sync_templates()
 
         self.defaults = self._load_belly_defaults()
         self.config = self.load()
 
-    def resource_path(self, relative_path):
-        """ Получает абсолютный путь к ресурсу, работает для обычного запуска и для PyInstaller """
+    @staticmethod
+    def resource_path(relative_path: str) -> Path:
+        """Абсолютный путь к ресурсу — работает и в dev-режиме, и после PyInstaller."""
         try:
-            # PyInstaller создает временную папку и хранит путь в _MEIPASS
-            base_path = sys._MEIPASS
-        except Exception:
+            base_path = sys._MEIPASS  # type: ignore[attr-defined]
+        except AttributeError:
             base_path = os.path.abspath(".")
+        return Path(base_path) / relative_path
 
-        return Path(os.path.join(base_path, relative_path))
-
-    def _get_app_dir(self, app_name):
-        if sys.platform == 'win32':
-            base = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
-        elif sys.platform == 'darwin':
-            base = Path.home() / 'Library' / 'Application Support'
+    @staticmethod
+    def _get_app_dir(app_name: str) -> Path:
+        if sys.platform == "win32":
+            base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        elif sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support"
         else:
-            base = Path.home() / '.config'
+            base = Path.home() / ".config"
         return base / app_name
 
-    def _copy_address_config(self):
-        belly_addr_config = self.belly_dir / "address_config.json"
-        if belly_addr_config.exists():
-            shutil.copy(belly_addr_config, self.address_config_file)
+    def _copy_address_config(self) -> None:
+        source = self.belly_dir / "address_config.json"
+        if source.exists():
+            shutil.copy(source, self.address_config_file)
 
-    def _initial_setup(self):
-        """Первый запуск: создание папок и копирование всего из belly"""
+    def _initial_setup(self) -> None:
+        """Первый запуск: создаём папки и копируем дефолтные файлы из belly."""
         self.app_dir.mkdir(parents=True, exist_ok=True)
         self.templates_dir.mkdir(parents=True, exist_ok=True)
 
-        # Копируем конфиг
         belly_config = self.belly_dir / "config.json"
         if belly_config.exists():
             shutil.copy(belly_config, self.config_file)
 
-        # Копируем конфиг адресов
         self._copy_address_config()
 
-    def _sync_templates(self):
-        """Синхронизирует шаблоны из belly в AppData (добавляет новые, обновляет старые)"""
+    def _sync_templates(self) -> None:
+        """Добавляет новые шаблоны из belly и обновляет устаревшие."""
         if not self.belly_dir.exists():
             return
-            
-        for source_item in self.belly_dir.glob("**/*.docx"):
-            dest_item = self.templates_dir / source_item.name
-            
-            # Если файла нет в AppData - копируем
-            if not dest_item.exists():
-                shutil.copy2(source_item, dest_item)
-            else:
-                # Если файл есть, проверяем время изменения. Если в belly новее - перезаписываем
-                if source_item.stat().st_mtime > dest_item.stat().st_mtime:
-                    shutil.copy2(source_item, dest_item)
 
-    def _load_belly_defaults(self):
+        for source in self.belly_dir.glob("**/*.docx"):
+            dest = self.templates_dir / source.name
+            if not dest.exists() or source.stat().st_mtime > dest.stat().st_mtime:
+                shutil.copy2(source, dest)
+
+    def _load_belly_defaults(self) -> dict:
         belly_config = self.belly_dir / "config.json"
-        base_defaults = {
-            "appearance_mode": "dark", 
-            "color_theme": "blue", 
-            "last_data_folder": str(Path.home()),
-            "last_template_folder": str(Path.home()),
-            "last_output_folder": str(Path.home() / "Downloads")
-        }
-        
         if belly_config.exists():
             try:
-                with open(belly_config, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    # Объединяем дефолты и то что в файле (если файла нет - просто дефолты)
-                    return {**base_defaults, **data}
-            except Exception:
+                with open(belly_config, encoding="utf-8") as f:
+                    return {**self._DEFAULTS, **json.load(f)}
+            except (json.JSONDecodeError, OSError):
                 pass
-        return base_defaults
+        return dict(self._DEFAULTS)
 
-    def load(self):
-        if self.config_file.exists():
-            try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    config = {**self.defaults, **data}
-                    
-                    # Миграция со старых ключей если новых нет
-                    if "last_folder" in config:
-                        if "last_data_folder" not in data:
-                            config["last_data_folder"] = config["last_folder"]
-                        if "last_template_folder" not in data:
-                            config["last_template_folder"] = config["last_folder"]
-                    if "save_folder" in config and "last_output_folder" not in data:
-                        config["last_output_folder"] = config["save_folder"]
-                        
-                    return config
-            except Exception:
-                return self.defaults
-        return self.defaults
+    def load(self) -> dict:
+        """Загружает конфиг из AppData, мигрирует старые ключи."""
+        if not self.config_file.exists():
+            return dict(self.defaults)
 
-    def save(self):
-        with open(self.config_file, 'w', encoding='utf-8') as f:
+        try:
+            with open(self.config_file, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return dict(self.defaults)
+
+        config = {**self.defaults, **data}
+
+        # Миграция старых ключей
+        if "last_folder" in config:
+            config.setdefault("last_data_folder", config["last_folder"])
+            config.setdefault("last_template_folder", config["last_folder"])
+        if "save_folder" in config:
+            config.setdefault("last_output_folder", config["save_folder"])
+
+        return config
+
+    def save(self) -> None:
+        with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=4)
 
-    def get_templates(self):
+    def get_templates(self) -> list:
         return [f.name for f in self.templates_dir.glob("*.docx")]
 
-    def add_template(self, source_path):
+    def add_template(self, source_path: str) -> tuple:
         path = Path(source_path)
-        if path.exists() and path.suffix.lower() == '.docx':
-            dest = self.templates_dir / path.name
-            shutil.copy(path, dest)
+        if path.exists() and path.suffix.lower() == ".docx":
+            shutil.copy(path, self.templates_dir / path.name)
             return True, path.name
         return False, None
 
-    def remove_template(self, filename):
-        file_path = self.templates_dir / filename
-        if file_path.exists():
-            file_path.unlink()
+    def remove_template(self, filename: str) -> bool:
+        target = self.templates_dir / filename
+        if target.exists():
+            target.unlink()
             return True
         return False

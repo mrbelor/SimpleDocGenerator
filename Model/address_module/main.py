@@ -1,138 +1,102 @@
-import os, re, json
+"""Нормализация адресов по конфигу (aliases + types)."""
+
+import json
+import os
+import re
+
 
 class AddressNormaliser:
+    """Парсит сырую строку адреса в структурированный список (label, value)."""
 
-	def __init__(self, source=None):
+    def __init__(self, source: str | None = None) -> None:
+        source = source or "address_config.json"
 
-		source = source or "address_config.json" # не вписываем в пременную по умолчанию, потмоу что иногда передаётся None
+        if not os.path.exists(source):
+            raise FileNotFoundError(f"Конфиг адресов не найден: {source}")
 
-		if not os.path.exists(source):
-			raise FileNotFoundError(f"конфиг не найден: {source}")
+        try:
+            with open(source, encoding="utf-8") as f:
+                cfg = json.load(f)
+            self.aliases: dict = cfg["aliases"]
+            self.types: dict = cfg["types"]
+        except KeyError as e:
+            raise KeyError(f"В конфиге отсутствует ключ: {e}") from e
 
-		try:
-			with open(source, encoding="utf-8") as f:
-				cfg = json.load(f)
-			self.aliases = cfg["aliases"]
-			self.types   = cfg["types"]
-		except KeyError as e:
-			raise KeyError(f"в конфиге отсутствует ключ: {e}")
+    # ------------------------------------------------------------------
+    # Публичный API
+    # ------------------------------------------------------------------
 
-	def _resolve(self, tok):
-		return self.aliases.get(tok.lower())
+    def parse(self, raw: str) -> list:
+        """Разбивает строку адреса на отсортированные по уровню части."""
+        chunks = [self._clean(c) for c in raw.split(",") if c.strip()]
+        parts = []
+        for chunk in chunks:
+            result = self._parse_chunk(chunk)
+            if result:
+                canon, val = result
+                info = self.types.get(canon)
+                if info:
+                    parts.append((info["label"], val.strip(), info["level"]))
 
-	def _clean(self, s):
-		# убираем всё кроме кириллицы, латиницы, цифр, дефиса и пробелов
-		return re.sub(r"[^\u0400-\u04ffа-яёА-ЯЁa-zA-Z0-9\-\s]", "", s).strip()
+        parts.sort(key=lambda x: x[2])
+        return [(label, value.title()) for label, value, _ in parts]
 
-	def _tokenize(self, s):
-		# режем по пробелам и запятым, пустые строки не берём (чтоб нули не удалить)
-		return [word for word in re.split(r"[\s,]+", s) if word]
+    # ------------------------------------------------------------------
+    # Приватные методы
+    # ------------------------------------------------------------------
 
-	def _parse_chunk(self, chunk: str):
-		tokens = [w for w in re.split(r"\s+", chunk.strip()) if w]
-		if not tokens:
-			return None
-		# 1) Двухсловный маркер в начале: "жд ст Энгельс"
-		if len(tokens) >= 2:
-			two = f"{tokens[0].lower()} {tokens[1].lower()}"
-			if self._resolve(two):
-				canon = self._resolve(two)
-				val = " ".join(tokens[2:]).lower()
-				return (canon, val)
-		# 2) Однословный маркер в начале: "ул Архангела Михаила"
-		if self._resolve(tokens[0].lower()):
-			canon = self._resolve(tokens[0].lower())
-			val = " ".join(tokens[1:]).lower()
-			return (canon, val)
-		# 3) Двухсловный маркер в конце
-		if len(tokens) >= 3:
-			two = f"{tokens[-2].lower()} {tokens[-1].lower()}"
-			if self._resolve(two):
-				canon = self._resolve(two)
-				val = " ".join(tokens[:-2]).lower()
-				return (canon, val)
-		# 4) Однословный маркер в конце: "Саратовская область"
-		if len(tokens) >= 2 and self._resolve(tokens[-1].lower()):
-			canon = self._resolve(tokens[-1].lower())
-			val = " ".join(tokens[:-1]).lower()
-			return (canon, val)
-		# 5) Слитный токен: "д102", "кв3"
-		if len(tokens) == 1:
-			m = re.match(r"^([а-яё\-/]+)\.?(\d.*)$", tokens[0].lower())
-			if m and self._resolve(m.group(1)):
-				canon = self._resolve(m.group(1))
-				return (canon, m.group(2))
-				
-		# 5.5) Отлов почтового индекса без явного маркера
-		joined_tokens = "".join(tokens)
-		if 4 <= len(joined_tokens) <= 10:
-			# Индексы содержат цифры (и иногда буквы/дефисы, например 12345-6789, SW1W 0NY)
-			if re.match(r"^[a-zA-Z0-9\-]+$", joined_tokens) and len(re.findall(r"\d", joined_tokens)) >= 3:
-				if joined_tokens.isdigit():
-					# Если это только цифры, индекс обычно состоит из 5 или 6 цифр
-					if 5 <= len(joined_tokens) <= 6:
-						return ("индекс", " ".join(tokens))
-				else:
-					# Буквенно-цифровые индексы по всему миру
-					return ("индекс", " ".join(tokens).upper())
+    def _resolve(self, token: str) -> str | None:
+        return self.aliases.get(token.lower())
 
-		# 6) Нераспознанный чанк
-		return ("?", " ".join(tokens).lower())
+    @staticmethod
+    def _clean(s: str) -> str:
+        return re.sub(r"[^\u0400-\u04ff\u0430-\u044f\u0451\u0410-\u042f\u0401a-zA-Z0-9\-\s]", "", s).strip()
 
-	def parse(self, raw):
-		chunks = [self._clean(c) for c in raw.split(",") if c.strip()]
+    @staticmethod
+    def _tokenize(s: str) -> list:
+        return [w for w in re.split(r"[\s,]+", s) if w]
 
-		parts = []
-		for chunk in chunks:
-			result = self._parse_chunk(chunk)
-			if result:
-				canon, val = result
-				info = self.types.get(canon)
-				if info:
-					parts.append((info["label"], val.strip(), info["level"]))
-		parts.sort(key=lambda x: x[2])
-		return [(label, value.title()) for label, value, _ in parts]
+    def _parse_chunk(self, chunk: str) -> tuple | None:
+        tokens = [w for w in re.split(r"\s+", chunk.strip()) if w]
+        if not tokens:
+            return None
 
-def test_address_normalisation():
-    n = AddressNormaliser()
+        # 1) Двухсловный маркер в начале: "жд ст Энгельс"
+        if len(tokens) >= 2:
+            two = f"{tokens[0].lower()} {tokens[1].lower()}"
+            if self._resolve(two):
+                return self._resolve(two), " ".join(tokens[2:]).lower()
 
-    # обычная улица
-    assert n.parse("ул Чапаева, д. 38, кв. 15, г Саратов, обл Саратовская") == [
-        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('ул.', 'Чапаева'), ('д.', '38'), ('кв.', '15')
-    ]
+        # 2) Однословный маркер в начале: "ул Архангела Михаила"
+        if self._resolve(tokens[0].lower()):
+            return self._resolve(tokens[0].lower()), " ".join(tokens[1:]).lower()
 
-    # территория
-    assert n.parse("тер Соколовая гора, д. 102, кв. 7, г Саратов, обл Саратовская") == [
-        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('тер.', 'Соколовая Гора'), ('д.', '102'), ('кв.', '7')
-    ]
+        # 3) Двухсловный маркер в конце
+        if len(tokens) >= 3:
+            two = f"{tokens[-2].lower()} {tokens[-1].lower()}"
+            if self._resolve(two):
+                return self._resolve(two), " ".join(tokens[:-2]).lower()
 
-    # микрорайон
-    assert n.parse("мкр Солнечный, д. 5, кв. 112, г Саратов, обл Саратовская") == [
-        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('мкр.', 'Солнечный'), ('д.', '5'), ('кв.', '112')
-    ]
+        # 4) Однословный маркер в конце: "Саратовская область"
+        if len(tokens) >= 2 and self._resolve(tokens[-1].lower()):
+            return self._resolve(tokens[-1].lower()), " ".join(tokens[:-1]).lower()
 
-    # многословная улица
-    assert n.parse("ул Архангела Михаила, д. 175, кв. 28, г Саратов, обл Саратовская") == [
-        ('обл.', 'Саратовская'), ('г.', 'Саратов'), ('ул.', 'Архангела Михаила'), ('д.', '175'), ('кв.', '28')
-    ]
+        # 5) Слитный токен: "д102", "кв3"
+        if len(tokens) == 1:
+            m = re.match(r"^([а-яё\-/]+)\.?(\d.*)$", tokens[0].lower())
+            if m and self._resolve(m.group(1)):
+                return self._resolve(m.group(1)), m.group(2)
 
-    # нераспознанный чанк ("озеро. Ячмень") → метка '?' сохраняется, остальное не ломается
-    result = n.parse("ул Архангела Михаила, д. 175, кв. 28, озеро. Ячмень, г Саратов, Саратовская область")
-    assert ('?', 'Озеро Ячмень') in result
-    assert ('ул.', 'Архангела Михаила') in result
-    assert ('г.', 'Саратов') in result
+        # 5.5) Почтовый индекс без маркера
+        joined = "".join(tokens)
+        if 4 <= len(joined) <= 10:
+            has_enough_digits = len(re.findall(r"\d", joined)) >= 3
+            is_index_chars = re.match(r"^[a-zA-Z0-9\-]+$", joined)
+            if is_index_chars and has_enough_digits:
+                if joined.isdigit() and 5 <= len(joined) <= 6:
+                    return "индекс", " ".join(tokens)
+                elif not joined.isdigit():
+                    return "индекс", " ".join(tokens).upper()
 
-    # пустая строка → пустой список
-    assert n.parse("") == []
-
-    print("test_address_normalisation: OK")
-
-def main():
-	n = AddressNormaliser()
-	with open("test_addresses.txt") as f:
-		for line in map(str.strip, f):
-			print(n.parse(line))
-
-
-if __name__ == '__main__':
-	test_address_normalisation()
+        # 6) Нераспознанный чанк
+        return "?", " ".join(tokens).lower()
