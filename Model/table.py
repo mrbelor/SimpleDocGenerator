@@ -242,6 +242,7 @@ class TableGenerator:
             frozenset({"п", "пос", "поселок", "посёлок"}): "п.",
             frozenset({"рп", "рабпос"}): "рп.",
             frozenset({"г", "город"}): "г.",
+            frozenset({"нп", "нп."}): "нп.",
         }
         prefix = "г."
         clean_words = []
