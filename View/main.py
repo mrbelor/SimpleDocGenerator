@@ -69,6 +69,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.icon_loading = load("loading")
         self.icon_check = load("check")
 
+        logo_path = self.controller.config.resource_path(os.path.join("exe_belly", "logo.png"))
+        logo_img = Image.open(logo_path)
+        self.icon_logo = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(36, 36))
+
     # ------------------------------------------------------------------
     # Построение UI
     # ------------------------------------------------------------------
@@ -84,6 +88,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _build_header(self) -> None:
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(10, 0))
+
+        ctk.CTkLabel(header, image=self.icon_logo, text="").pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(header, text="SimpleDocGenerator", font=("Arial", 15, "bold")).pack(side="left")
 
         mode = self.controller.config.config.get("appearance_mode", "dark")
         self.theme_btn = ctk.CTkButton(
