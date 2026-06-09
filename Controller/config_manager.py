@@ -75,14 +75,15 @@ class ConfigManager:
         self._copy_address_config()
 
     def _sync_templates(self) -> None:
-        """Добавляет новые шаблоны из belly и обновляет устаревшие."""
+        """добавляет новые шаблоны из belly и обновляет устаревшие"""
         if not self.belly_dir.exists():
             return
 
-        for source in self.belly_dir.glob("**/*.docx"):
-            dest = self.templates_dir / source.name
-            if not dest.exists() or source.stat().st_mtime > dest.stat().st_mtime:
-                shutil.copy2(source, dest)
+        for suffix in (".docx", ".xlsx", ".xls"):
+            for source in self.belly_dir.glob(f"**/*{suffix}"):
+                dest = self.templates_dir / source.name
+                if not dest.exists() or source.stat().st_mtime > dest.stat().st_mtime:
+                    shutil.copy2(source, dest)
 
     def _load_belly_defaults(self) -> dict:
         belly_config = self.belly_dir / "config.json"
@@ -121,11 +122,16 @@ class ConfigManager:
             json.dump(self.config, f, ensure_ascii=False, indent=4)
 
     def get_templates(self) -> list:
-        return [f.name for f in self.templates_dir.glob("*.docx")]
+        files = []
+        for suffix in (".docx", ".xlsx", ".xls"):
+            files.extend(self.templates_dir.glob(f"*{suffix}"))
+        return [f.name for f in sorted(files)]
 
     def add_template(self, source_path: str) -> tuple:
         path = Path(source_path)
-        if path.exists() and path.suffix.lower() == ".docx":
+        if not path.exists():
+            return False, None
+        if path.suffix.lower() in (".xlsx", ".docx", ".xls"):
             shutil.copy(path, self.templates_dir / path.name)
             return True, path.name
         return False, None

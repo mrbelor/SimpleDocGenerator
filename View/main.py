@@ -1,4 +1,4 @@
-"""Главное окно приложения (View в MVC)."""
+# this file is fully vibecoded
 
 import os
 
@@ -16,7 +16,8 @@ from constants import (
 
 # Поддерживаемые форматы при drag-n-drop
 _DATA_EXTENSIONS = {".xls", ".xlsx", ".csv"}
-_TEMPLATE_EXTENSIONS = {".docx"}
+_TEMPLATE_EXTENSIONS = {".docx", ".xls", ".xlsx"}
+DND_SPLIT = 45  # % высоты окна: выше → данные, ниже → шаблон
 
 
 class App(ctk.CTk, TkinterDnD.DnDWrapper):
@@ -218,15 +219,31 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.gen_as_btn.bind("<Leave>", lambda _: self.show_status("", "gray"))
 
     def _setup_overlay(self) -> None:
-        self.overlay_frame = ctk.CTkFrame(
-            self, fg_color=("gray95", "gray5"), border_width=5,
-            border_color="#3498db", corner_radius=20,
+        self.overlay_frame = ctk.CTkFrame(self, fg_color="transparent")
+
+        top_h = (DND_SPLIT - 2) / 100
+        bot_y = (DND_SPLIT + 2) / 100
+        bot_h = (96 - DND_SPLIT) / 100
+
+        ov_top = ctk.CTkFrame(
+            self.overlay_frame, fg_color=("gray95", "gray5"),
+            border_width=4, border_color="#3498db", corner_radius=16,
         )
         ctk.CTkLabel(
-            self.overlay_frame,
-            text="Переместите свои файлы сюда\n(Excel, CSV или Word)",
-            font=("Arial", 22, "bold"), text_color="#3498db",
+            ov_top, text="Данные (Excel / CSV)",
+            font=("Arial", 20, "bold"), text_color="#3498db",
         ).place(relx=0.5, rely=0.5, anchor="center")
+        ov_top.place(relx=0.02, rely=0.02, relwidth=0.96, relheight=top_h)
+
+        ov_bot = ctk.CTkFrame(
+            self.overlay_frame, fg_color=("gray95", "gray5"),
+            border_width=4, border_color="#e67e22", corner_radius=16,
+        )
+        ctk.CTkLabel(
+            ov_bot, text="Шаблон (Word / Excel)",
+            font=("Arial", 20, "bold"), text_color="#e67e22",
+        ).place(relx=0.5, rely=0.5, anchor="center")
+        ov_bot.place(relx=0.02, rely=bot_y, relwidth=0.96, relheight=bot_h)
 
     def _setup_error_popup(self) -> None:
         self.error_frame = ctk.CTkFrame(self, fg_color="#e74c3c", corner_radius=0)
@@ -264,7 +281,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _on_drag_enter(self, event) -> None:
         self.hide_error_popup()
-        self.overlay_frame.place(relx=0.02, rely=0.02, relwidth=0.96, relheight=0.96)
+        self.overlay_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.overlay_frame.lift()
         self.update_idletasks()
 
@@ -279,12 +296,19 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         path = event.data.strip("{}")
         ext = os.path.splitext(path)[1].lower()
 
-        if ext in _DATA_EXTENSIONS:
-            self.process_data_file(path)
-        elif ext in _TEMPLATE_EXTENSIONS:
-            self.process_template_file(path)
+        rel_y = event.y_root - self.winfo_rooty()
+        drop_top = rel_y < self.winfo_height() * DND_SPLIT / 100
+
+        if drop_top:
+            if ext in _DATA_EXTENSIONS:
+                self.process_data_file(path)
+            else:
+                self.show_error_popup()
         else:
-            self.show_error_popup()
+            if ext in _TEMPLATE_EXTENSIONS:
+                self.process_template_file(path)
+            else:
+                self.show_error_popup()
 
     # ------------------------------------------------------------------
     # Тема
@@ -329,7 +353,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.hide_error_popup()
         path = fd.askopenfilename(
             initialdir=self.controller.get_last_template_folder(),
-            filetypes=[("Шаблон Word", "*.docx *.doc")],
+            filetypes=[("Шаблон", "*.docx *.xls *.xlsx")],
         )
         if path:
             self.process_template_file(path)
@@ -394,11 +418,17 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.show_error_popup("Шаблон не выбран!")
             return
 
+        tmpl_suffix = os.path.splitext(template)[1].lower()
+        if tmpl_suffix in (".xls", ".xlsx"):
+            out_ext, filetypes = ".xlsx", [("Excel", "*.xlsx")]
+        else:
+            out_ext, filetypes = ".docx", [("Word Document", "*.docx")]
+
         path = fd.asksaveasfilename(
             initialdir=self.controller.get_last_output_folder(),
-            defaultextension=".docx",
+            defaultextension=out_ext,
             initialfile=self.controller.get_suggested_filename(template),
-            filetypes=[("Word Document", "*.docx")],
+            filetypes=filetypes,
         )
         if path:
             self._start_loading()

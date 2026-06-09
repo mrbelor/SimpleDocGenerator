@@ -64,17 +64,13 @@ def generate_documents(
     output_path: str = "./result.docx",
     config_path: str | None = None,
 ) -> Path:
-    """
-    Генерирует Word-документ из шаблона и списка записей.
-
-    Если шаблон содержит {{:table}} — группирует данные и строит таблицу.
-    Иначе — создаёт один документ на запись и склеивает через docxcompose.
-
-    Returns:
-        Path к итоговому файлу.
-    """
+    """генерирует документ из шаблона и данных; если шаблон excel — идёт в ExcelGenerator, иначе Word."""
     if not data:
         return None
+
+    if Path(path_to_template).suffix.lower() in (".xls", ".xlsx"):
+        from .excel_generator import ExcelGenerator
+        return ExcelGenerator().generate(data, path_to_template, output_path)
 
     output_path = Path(output_path)
 

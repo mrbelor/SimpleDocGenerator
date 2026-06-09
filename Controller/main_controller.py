@@ -100,11 +100,14 @@ class MainController:
         save_dir.mkdir(parents=True, exist_ok=True)
 
         base_name = self.get_suggested_filename(template_name)
-        candidate = save_dir / f"{base_name}.docx"
+        tmpl_suffix = Path(template_name).suffix.lower()
+        out_suffix = tmpl_suffix if tmpl_suffix in (".xls", ".xlsx") else ".docx"
+
+        candidate = save_dir / f"{base_name}{out_suffix}"
 
         if candidate.exists():
             import time
-            candidate = save_dir / f"{base_name}_{int(time.time())}.docx"
+            candidate = save_dir / f"{base_name}_{int(time.time())}{out_suffix}"
 
         return str(candidate)
 
