@@ -1,3 +1,7 @@
+# Драфты
+release_draft.txt
+commit_note.txt
+
 # PyInstaller and Build outputs
 *.spec
 dist/

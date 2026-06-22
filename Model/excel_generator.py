@@ -21,6 +21,7 @@ import openpyxl
 
 _TAG_RE = re.compile(r"\{\{([^{}]+)\}\}")
 _OLD_CONCAT_RE = re.compile(r"\}\}\s*\+|\"[^\"]*\"\s*\+\s*\{\{")
+_TAG_NUM = ":num"  # {{:num}} → порядковый номер записи
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +64,10 @@ class XlsxGenerator:
                 _clone_row_xlsx(ws_src, rx, ws_out, rx)
 
             out_row = header_count + 1
-            for record in data_list:
+            for rec_idx, record in enumerate(data_list):
+                _eval = lambda s, r, n=rec_idx + 1: _evaluate(s, r, n)
                 for tmpl_rx in tmpl_rows:
-                    _clone_row_xlsx(ws_src, tmpl_rx, ws_out, out_row, record, _evaluate)
+                    _clone_row_xlsx(ws_src, tmpl_rx, ws_out, out_row, record, _eval)
                     out_row += 1
 
             for col, dim in ws_src.column_dimensions.items():
@@ -152,9 +154,9 @@ class XlsGenerator:
                 _dup_row(rs, ws_src, rx, ws_out, out_row)
                 out_row += 1
 
-            for record in data_list:
+            for rec_idx, record in enumerate(data_list):
                 for tmpl_rx in tmpl_rows:
-                    _dup_row(rs, ws_src, tmpl_rx, ws_out, out_row, record)
+                    _dup_row(rs, ws_src, tmpl_rx, ws_out, out_row, record, rec_idx + 1)
                     out_row += 1
 
             for cx, colinfo in rs.colinfo_map.items():
@@ -202,7 +204,7 @@ class _RawXf:
         return self._idx
 
 
-def _dup_row(rs_xlrd, ws_xlwt_src, src_rx, ws_out, dst_rx, record=None):
+def _dup_row(rs_xlrd, ws_xlwt_src, src_rx, ws_out, dst_rx, record=None, row_num=None):
     """дублирует строку: xf_idx берём из xlwt-источника (тот же воркбук),
     значения — из xlrd; подстановку тегов делаем только для строковых ячеек."""
     if src_rx in rs_xlrd.rowinfo_map:
@@ -226,7 +228,7 @@ def _dup_row(rs_xlrd, ws_xlwt_src, src_rx, ws_out, dst_rx, record=None):
 
         val = cell.value
         if record is not None and isinstance(val, str) and "{{" in val:
-            val = _evaluate(val, record)
+            val = _evaluate(val, record, row_num)
 
         ctype = cell.ctype
         if ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
@@ -258,16 +260,20 @@ def _find_template_rows_xls(rs):
 # общее
 # ---------------------------------------------------------------------------
 
-def _evaluate(template_str: str, record: dict):
+def _evaluate(template_str: str, record: dict, row_num: int | None = None):
     if not isinstance(template_str, str) or not template_str or "{{" not in template_str:
         return template_str
+
+    def _replace(tag: str) -> str:
+        tag = tag.strip()
+        if row_num is not None and tag == _TAG_NUM:
+            return str(row_num)
+        return str(record.get(tag, ""))
+
     if _OLD_CONCAT_RE.search(template_str):
         parts = re.findall(r'\{\{([^{}]+)\}\}|"([^"]*)"', template_str)
-        return "".join(
-            str(record.get(f.strip(), "")) if f else lit
-            for f, lit in parts
-        )
-    return _TAG_RE.sub(lambda m: str(record.get(m.group(1).strip(), "")), template_str)
+        return "".join(_replace(f) if f else lit for f, lit in parts)
+    return _TAG_RE.sub(lambda m: _replace(m.group(1)), template_str)
 
 
 
