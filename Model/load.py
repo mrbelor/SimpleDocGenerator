@@ -54,21 +54,66 @@ def _normalize_date_value(val):
     return val
 
 
-def load_data(file_path):
-    """Загружает Excel или CSV-файл, возвращает список словарей."""
-    path = Path(file_path.strip(" '\""))
+def _clean_path(file_path):
+    """Путь может прилететь из drag-n-drop в кавычках."""
+    return Path(str(file_path).strip(" '\""))
+
+
+def get_sheet_names(file_path):
+    """Видимые листы книги.
+
+    Скрытые не показываем и не читаем — это служебка вроде «Раскр. списки»
+    (источник выпадающих списков), в данные она попадать не должна.
+    Для csv и нечитаемых файлов — пустой список.
+    """
+    path = _clean_path(file_path)
+    ext = path.suffix.lower()
+    if not path.exists() or ext not in (".xls", ".xlsx"):
+        return []
+
+    try:
+        if ext == ".xls":
+            import xlrd
+            book = xlrd.open_workbook(path)
+            try:
+                return [s.name for s in book.sheets() if s.visibility == 0]
+            finally:
+                book.release_resources()
+
+        import openpyxl
+        book = openpyxl.load_workbook(path, read_only=True)
+        try:
+            return [ws.title for ws in book.worksheets if ws.sheet_state == "visible"]
+        finally:
+            book.close()
+    except Exception:
+        return []
+
+
+def load_data(file_path, sheet=None):
+    """Загружает Excel или CSV-файл, возвращает список словарей.
+
+    sheet=None — все листы читаются и склеиваются (поведение по умолчанию),
+    иначе берётся только указанный лист.
+    """
+    path = _clean_path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Файл не найден: {path}")
 
     ext = path.suffix.lower()
     if ext == ".csv":
         df = pd.read_csv(path, sep=None, engine="python")
+    elif ext in (".xls", ".xlsx") and sheet is not None:
+        # лист выбран явно — читаем только его и падаем, если не вышло:
+        # подсунуть вместо него содержимое всего файла было бы хуже ошибки
+        df = pd.read_excel(path, sheet_name=sheet, dtype=str)
     elif ext in (".xls", ".xlsx"):
         try:
-            all_sheets = pd.read_excel(path, sheet_name=None, dtype=str)
+            visible = get_sheet_names(path)
+            all_sheets = pd.read_excel(path, sheet_name=visible or None, dtype=str)
             df = pd.concat(all_sheets.values(), ignore_index=True)
         except Exception:
-            df = pd.read_csv(path, sep=None, engine="python")
+            df = pd.read_csv(path, sep=None, engine="python")  # бывает csv под видом .xls
     else:
         raise ValueError(f"Формат не поддерживается: {ext}. Ожидается .csv, .xls или .xlsx")
 

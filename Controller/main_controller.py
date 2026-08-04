@@ -5,7 +5,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from Model import load_data, transform_time, transform_address, generate_documents
+from Model import load_data, get_sheet_names, transform_time, transform_address, generate_documents
 from .config_manager import ConfigManager
 from constants import APP_NAME, ERR_NO_DATA, ERR_NO_TEMPLATE, ERR_TEMPLATE_FILE_MISSING, TEMPLATE_PLACEHOLDER
 
@@ -18,15 +18,23 @@ class MainController:
         self.name = APP_NAME
         self.source_data: list | None = None
         self.source_path: str | None = None
+        self.source_sheet: str | None = None
 
     # ------------------------------------------------------------------
     # Данные
     # ------------------------------------------------------------------
 
-    def load_source(self, file_path: str) -> tuple:
-        """Загружает Excel/CSV, трансформирует время и адреса."""
+    def get_sheets(self, file_path: str) -> list:
+        """Листы файла данных — для выбора во вьюхе."""
+        return get_sheet_names(file_path)
+
+    def load_source(self, file_path: str, sheet: str | None = None) -> tuple:
+        """Загружает Excel/CSV, трансформирует время и адреса.
+
+        sheet=None — берутся все листы, иначе только указанный.
+        """
         try:
-            raw_data = load_data(file_path)
+            raw_data = load_data(file_path, sheet=sheet)
             data = transform_time(raw_data)
 
             addr_cfg = str(self.config.address_config_file)
@@ -34,10 +42,12 @@ class MainController:
 
             self.source_data = data
             self.source_path = file_path
+            self.source_sheet = sheet
             self.config.config["last_data_folder"] = os.path.dirname(file_path)
             self.config.save()
 
-            return True, f"Выбрано: {os.path.basename(file_path)}"
+            name = os.path.basename(file_path)
+            return True, f"Выбрано: {name}" if sheet is None else f"Выбрано: {name} → {sheet}"
         except Exception as e:
             traceback.print_exc()
             return False, f"Ошибка: {e}"

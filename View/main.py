@@ -12,6 +12,7 @@ from constants import (
     INVALID_TEMPLATES,
     TEMPLATE_PLACEHOLDER,
     POPUP_ERRORS,
+    SHEET_ALL,
 )
 
 # Поддерживаемые форматы при drag-n-drop
@@ -122,7 +123,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             command=self.select_data_file,
         ).pack(pady=5)
 
-        ctk.CTkFrame(frame, height=2, fg_color="gray30").pack(fill="x", padx=20, pady=15)
+        self._build_sheet_controls(frame)
+
+        self.data_separator = ctk.CTkFrame(frame, height=2, fg_color="gray30")
+        self.data_separator.pack(fill="x", padx=20, pady=15)
 
         # Секция ШАБЛОН
         ctk.CTkLabel(frame, text="ШАБЛОН (Word)", font=("Arial", 14, "bold")).pack(pady=5)
@@ -136,6 +140,24 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text_color=("black", "white"),
             command=self.controller.open_templates_folder,
         ).pack(pady=(5, 0))
+
+    def _build_sheet_controls(self, parent) -> None:
+        """Выбор листа. Строка скрыта, пока в файле не окажется больше одного листа."""
+        self.sheet_row = ctk.CTkFrame(parent, fg_color="transparent")
+
+        ctk.CTkLabel(self.sheet_row, text="Лист:").pack(side="left", padx=(0, 5))
+
+        self.sheet_var = ctk.StringVar(value=SHEET_ALL)
+        self.sheet_dropdown = ctk.CTkOptionMenu(
+            self.sheet_row,
+            values=[SHEET_ALL],
+            variable=self.sheet_var,
+            width=160,
+            text_color=("black", "white"),
+            dynamic_resizing=True,
+            command=self.on_sheet_change,
+        )
+        self.sheet_dropdown.pack(side="left")
 
     def _build_template_controls(self, parent) -> None:
         row = ctk.CTkFrame(parent, fg_color="transparent")
@@ -337,13 +359,33 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if path:
             self.process_data_file(path)
 
-    def process_data_file(self, path: str) -> None:
-        success, msg = self.controller.load_source(path)
+    def process_data_file(self, path: str, sheet: str | None = None) -> None:
+        success, msg = self.controller.load_source(path, sheet=sheet)
         if success:
             self.data_path_label.configure(text=msg, text_color="#2ecc71")
             self.after(2000, lambda: self.data_path_label.configure(text_color=("black", "white")))
+            if sheet is None:
+                self.update_sheets_list(path)
         else:
             self.show_status(msg, "red")
+
+    def update_sheets_list(self, path: str) -> None:
+        """Показывает выбор листа только когда листов больше одного."""
+        sheets = self.controller.get_sheets(path)
+        if len(sheets) > 1:
+            self.sheet_dropdown.configure(values=[SHEET_ALL] + sheets)
+            self.sheet_var.set(SHEET_ALL)
+            self.sheet_row.pack(pady=(0, 5), before=self.data_separator)
+        else:
+            self.sheet_row.pack_forget()
+
+    def on_sheet_change(self, choice: str) -> None:
+        """Перечитывает уже выбранный файл с новым листом."""
+        if self.controller.source_path:
+            self.process_data_file(
+                self.controller.source_path,
+                sheet=None if choice == SHEET_ALL else choice,
+            )
 
     # ------------------------------------------------------------------
     # Шаблоны

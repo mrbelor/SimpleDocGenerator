@@ -7,6 +7,9 @@ TEMPLATE_PLACEHOLDER = "Шаблон не выбран"
 TEMPLATE_NOT_FOUND = "Файл не найден"
 INVALID_TEMPLATES = frozenset({TEMPLATE_PLACEHOLDER, TEMPLATE_NOT_FOUND})
 
+# Выбор листа в файле данных: пункт «все листы» = текущее поведение
+SHEET_ALL = "Все листы"
+
 # Сообщения об ошибках генерации (возвращаются контроллером, проверяются вьюхой)
 ERR_NO_DATA = "Нет данных!"
 ERR_NO_TEMPLATE = "Шаблон не выбран!"
