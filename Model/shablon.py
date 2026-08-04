@@ -70,7 +70,7 @@ def generate_documents(
 
     if Path(path_to_template).suffix.lower() in (".xls", ".xlsx"):
         from .excel_generator import ExcelGenerator
-        return ExcelGenerator().generate(data, path_to_template, output_path)
+        return ExcelGenerator().generate(data, path_to_template, output_path, config_path)
 
     output_path = Path(output_path)
 

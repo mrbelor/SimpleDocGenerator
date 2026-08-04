@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
+from pandas.io.common import dedup_names
 
 from .address_module import AddressNormaliser
 
@@ -90,6 +91,29 @@ def get_sheet_names(file_path):
         return []
 
 
+def _clean_names(columns):
+    """Стрипает имена столбцов и разводит получившихся тёзок.
+
+    Порядок важен: 'Кв' и 'Кв ' для pandas разные имена, разводить ему нечего,
+    и стрип после чтения схлопнул бы их молча. Дедупликацию берём его же —
+    dedup_names это та функция, которой парсеры pandas делают 'Кв' и 'Кв.1'.
+    """
+    stripped = [c.strip() if isinstance(c, str) else c for c in columns]
+    return list(dedup_names(stripped, False))
+
+
+def _read_excel(path, sheet):
+    head = pd.read_excel(path, sheet_name=sheet, dtype=str, nrows=0)
+    return pd.read_excel(path, sheet_name=sheet, dtype=str,
+                         header=0, names=_clean_names(head.columns))
+
+
+def _read_csv(path):
+    head = pd.read_csv(path, sep=None, engine="python", nrows=0)
+    return pd.read_csv(path, sep=None, engine="python",
+                       header=0, names=_clean_names(head.columns))
+
+
 def load_data(file_path, sheet=None):
     """Загружает Excel или CSV-файл, возвращает список словарей.
 
@@ -102,18 +126,18 @@ def load_data(file_path, sheet=None):
 
     ext = path.suffix.lower()
     if ext == ".csv":
-        df = pd.read_csv(path, sep=None, engine="python")
+        df = _read_csv(path)
     elif ext in (".xls", ".xlsx") and sheet is not None:
         # лист выбран явно — читаем только его и падаем, если не вышло:
         # подсунуть вместо него содержимое всего файла было бы хуже ошибки
-        df = pd.read_excel(path, sheet_name=sheet, dtype=str)
+        df = _read_excel(path, sheet)
     elif ext in (".xls", ".xlsx"):
         try:
             visible = get_sheet_names(path)
-            all_sheets = pd.read_excel(path, sheet_name=visible or None, dtype=str)
-            df = pd.concat(all_sheets.values(), ignore_index=True)
+            frames = [_read_excel(path, s) for s in visible] if visible else [_read_excel(path, 0)]
+            df = pd.concat(frames, ignore_index=True)
         except Exception:
-            df = pd.read_csv(path, sep=None, engine="python")  # бывает csv под видом .xls
+            df = _read_csv(path)  # бывает csv под видом .xls
     else:
         raise ValueError(f"Формат не поддерживается: {ext}. Ожидается .csv, .xls или .xlsx")
 

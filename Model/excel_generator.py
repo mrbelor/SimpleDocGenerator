@@ -18,10 +18,14 @@ from pathlib import Path
 
 import xlrd
 import openpyxl
+from openpyxl.cell.rich_text import CellRichText
+
+from .load import traffic_light
 
 _TAG_RE = re.compile(r"\{\{([^{}]+)\}\}")
 _OLD_CONCAT_RE = re.compile(r"\}\}\s*\+|\"[^\"]*\"\s*\+\s*\{\{")
 _TAG_NUM = ":num"  # {{:num}} → порядковый номер записи
+_SPECS = ("addr", "time")  # {{Поле:addr}} — только по явному указанию в шаблоне
 
 
 # ---------------------------------------------------------------------------
@@ -31,11 +35,11 @@ _TAG_NUM = ":num"  # {{:num}} → порядковый номер записи
 class ExcelGenerator:
     """выбирает правильный генератор по расширению шаблона"""
 
-    def generate(self, data_list: list, template_path, output_path) -> Path:
+    def generate(self, data_list: list, template_path, output_path, config_path=None) -> Path:
         template_path = Path(template_path)
         if template_path.suffix.lower() == ".xls":
-            return XlsGenerator().generate(data_list, template_path, output_path)
-        return XlsxGenerator().generate(data_list, template_path, output_path)
+            return XlsGenerator().generate(data_list, template_path, output_path, config_path)
+        return XlsxGenerator().generate(data_list, template_path, output_path, config_path)
 
 
 # ---------------------------------------------------------------------------
@@ -44,11 +48,13 @@ class ExcelGenerator:
 
 class XlsxGenerator:
 
-    def generate(self, data_list: list, template_path, output_path) -> Path:
-        return self._from_xlsx(data_list, Path(template_path), output_path)
+    def generate(self, data_list: list, template_path, output_path, config_path=None) -> Path:
+        return self._from_xlsx(data_list, Path(template_path), output_path, config_path)
 
-    def _from_xlsx(self, data_list: list, template_path: Path, output_path) -> Path:
-        wb = openpyxl.load_workbook(str(template_path))
+    def _from_xlsx(self, data_list: list, template_path: Path, output_path, config_path=None) -> Path:
+        # rich_text=True — иначе разный кегль и цвет внутри одной ячейки
+        # схлопываются в плоскую строку ещё при чтении
+        wb = openpyxl.load_workbook(str(template_path), rich_text=True)
 
         for sheet_name in list(wb.sheetnames):
             ws_src = wb[sheet_name]
@@ -63,12 +69,18 @@ class XlsxGenerator:
             for rx in range(1, header_count + 1):
                 _clone_row_xlsx(ws_src, rx, ws_out, rx)
 
+            # куда уехала каждая исходная строка: шапка на место, шаблон размножился
+            row_map = {rx: [rx] for rx in range(1, header_count + 1)}
+
             out_row = header_count + 1
             for rec_idx, record in enumerate(data_list):
-                _eval = lambda s, r, n=rec_idx + 1: _evaluate(s, r, n)
+                _eval = lambda s, r, n=rec_idx + 1: _evaluate(s, r, n, config_path)
                 for tmpl_rx in tmpl_rows:
                     _clone_row_xlsx(ws_src, tmpl_rx, ws_out, out_row, record, _eval)
+                    row_map.setdefault(tmpl_rx, []).append(out_row)
                     out_row += 1
+
+            _clone_merges_xlsx(ws_src, ws_out, row_map)
 
             for col, dim in ws_src.column_dimensions.items():
                 new_dim = _copy.copy(dim)
@@ -95,15 +107,33 @@ def _find_template_rows_xlsx(ws):
     return tmpl_rows[0] - 1, tmpl_rows
 
 
+def _clone_merges_xlsx(ws_src, ws_dst, row_map):
+    """Переносит объединения ячеек по карте строк: шапку один раз, шаблон на каждую запись."""
+    for rng in ws_src.merged_cells.ranges:
+        height = rng.max_row - rng.min_row
+        for start in row_map.get(rng.min_row, []):
+            ws_dst.merge_cells(
+                start_row=start,
+                start_column=rng.min_col,
+                end_row=start + height,
+                end_column=rng.max_col,
+            )
+
+
 def _clone_row_xlsx(ws_src, src_rx, ws_dst, dst_rx, record=None, evaluate_fn=None):
     for cell in ws_src[src_rx]:
         dst = ws_dst.cell(row=dst_rx, column=cell.column)
+        value = cell.value
+        # тег внутри разноформатной ячейки: подставляем как обычный текст,
+        # иначе тег не найдётся и в результат уедет сам {{...}}
+        if isinstance(value, CellRichText) and "{{" in str(value):
+            value = str(value)
         if (record is not None and evaluate_fn is not None
-                and isinstance(cell.value, str) and "{{" in cell.value):
-            val = evaluate_fn(cell.value, record)
+                and isinstance(value, str) and "{{" in value):
+            val = evaluate_fn(value, record)
             dst.value = val if val else None
         else:
-            dst.value = cell.value
+            dst.value = value
         dst._style = cell._style  # style id валиден — один воркбук
 
     if src_rx in ws_src.row_dimensions:
@@ -119,7 +149,7 @@ class XlsGenerator:
     все стили), добавляем выходной лист В ТОМ ЖЕ воркбуке и пишем в него ячейки
     через put_cell с теми же xf_idx — никакой ручной трансляции стилей."""
 
-    def generate(self, data_list: list, template_path, output_path) -> Path:
+    def generate(self, data_list: list, template_path, output_path, config_path=None) -> Path:
         from xlutils.copy import copy as xl_copy
 
         template_path = Path(template_path)
@@ -156,7 +186,7 @@ class XlsGenerator:
 
             for rec_idx, record in enumerate(data_list):
                 for tmpl_rx in tmpl_rows:
-                    _dup_row(rs, ws_src, tmpl_rx, ws_out, out_row, record, rec_idx + 1)
+                    _dup_row(rs, ws_src, tmpl_rx, ws_out, out_row, record, rec_idx + 1, config_path)
                     out_row += 1
 
             for cx, colinfo in rs.colinfo_map.items():
@@ -204,7 +234,7 @@ class _RawXf:
         return self._idx
 
 
-def _dup_row(rs_xlrd, ws_xlwt_src, src_rx, ws_out, dst_rx, record=None, row_num=None):
+def _dup_row(rs_xlrd, ws_xlwt_src, src_rx, ws_out, dst_rx, record=None, row_num=None, config_path=None):
     """дублирует строку: xf_idx берём из xlwt-источника (тот же воркбук),
     значения — из xlrd; подстановку тегов делаем только для строковых ячеек."""
     if src_rx in rs_xlrd.rowinfo_map:
@@ -228,7 +258,7 @@ def _dup_row(rs_xlrd, ws_xlwt_src, src_rx, ws_out, dst_rx, record=None, row_num=
 
         val = cell.value
         if record is not None and isinstance(val, str) and "{{" in val:
-            val = _evaluate(val, record, row_num)
+            val = _evaluate(val, record, row_num, config_path)
 
         ctype = cell.ctype
         if ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
@@ -260,7 +290,7 @@ def _find_template_rows_xls(rs):
 # общее
 # ---------------------------------------------------------------------------
 
-def _evaluate(template_str: str, record: dict, row_num: int | None = None):
+def _evaluate(template_str: str, record: dict, row_num: int | None = None, config_path=None):
     if not isinstance(template_str, str) or not template_str or "{{" not in template_str:
         return template_str
 
@@ -268,6 +298,9 @@ def _evaluate(template_str: str, record: dict, row_num: int | None = None):
         tag = tag.strip()
         if row_num is not None and tag == _TAG_NUM:
             return str(row_num)
+        key, sep, spec = tag.rpartition(":")
+        if sep and spec in _SPECS:
+            return str(traffic_light(record.get(key, ""), spec, config_path=config_path))
         return str(record.get(tag, ""))
 
     if _OLD_CONCAT_RE.search(template_str):

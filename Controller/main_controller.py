@@ -5,7 +5,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from Model import load_data, get_sheet_names, transform_time, transform_address, generate_documents
+from Model import load_data, get_sheet_names, transform_time, generate_documents
 from .config_manager import ConfigManager
 from constants import APP_NAME, ERR_NO_DATA, ERR_NO_TEMPLATE, ERR_TEMPLATE_FILE_MISSING, TEMPLATE_PLACEHOLDER
 
@@ -29,16 +29,14 @@ class MainController:
         return get_sheet_names(file_path)
 
     def load_source(self, file_path: str, sheet: str | None = None) -> tuple:
-        """Загружает Excel/CSV, трансформирует время и адреса.
+        """Загружает Excel/CSV, трансформирует время.
 
         sheet=None — берутся все листы, иначе только указанный.
+        Адреса тут не трогаем: нормализация только по явному тегу {{Поле:addr}}.
         """
         try:
             raw_data = load_data(file_path, sheet=sheet)
             data = transform_time(raw_data)
-
-            addr_cfg = str(self.config.address_config_file)
-            data = transform_address(data, config_path=addr_cfg)
 
             self.source_data = data
             self.source_path = file_path
