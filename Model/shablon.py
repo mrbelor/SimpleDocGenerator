@@ -108,6 +108,3 @@ def _unique_path(path: Path) -> Path:
         return path.with_stem(f"{path.stem}_{int(time.time())}")
     return path
 
-
-# Обратная совместимость: старое имя функции
-shablon = generate_documents

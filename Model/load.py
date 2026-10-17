@@ -195,25 +195,6 @@ def _transform_address_value(val, config_path=None, **_):
     return ", ".join(parts)
 
 
-def transform_address(data, address_key="Адрес", strict=False, config_path=None):
-    """Нормализует адреса во всех записях. Поиск колонки нечувствителен к регистру."""
-    result = []
-    for item in data:
-        item = item.copy()
-        actual_key = _find_address_key(item, address_key, strict)
-        if actual_key:
-            item[actual_key] = _transform_address_value(item[actual_key], config_path=config_path)
-        result.append(item)
-    return result
-
-
-def _find_address_key(item, address_key, strict):
-    if strict:
-        return address_key if address_key in item else None
-    key_lower = address_key.lower()
-    return next((k for k in item if key_lower in str(k).lower()), None)
-
-
 # Светофор — диспетчер форматтеров для шаблонов ({{Ключ:addr}} и т.п.)
 def _format_time(val=None, **_):
     return _transform_time_value(_normalize_date_value(val))

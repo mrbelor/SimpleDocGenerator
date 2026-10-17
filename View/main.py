@@ -366,6 +366,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.after(2000, lambda: self.data_path_label.configure(text_color=("black", "white")))
             if sheet is None:
                 self.update_sheets_list(path)
+            self.update_save_info()
         else:
             self.show_status(msg, "red")
 
@@ -530,9 +531,5 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if not hasattr(self, "save_info_label"):
             return
         self.save_info_label.configure(text=f"Папка: {self.controller.get_save_folder_name()}")
-        template = self.template_var.get()
-        if template and template not in INVALID_TEMPLATES:
-            suggested = self.controller.get_suggested_filename(template)
-            self.save_name_label.configure(text=f"Имя: {suggested}")
-        else:
-            self.save_name_label.configure(text="Имя: не определено")
+        name = self.controller.get_output_name()
+        self.save_name_label.configure(text=f"Имя: {name or 'не определено'}")

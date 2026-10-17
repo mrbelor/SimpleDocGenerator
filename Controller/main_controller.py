@@ -74,6 +74,12 @@ class MainController:
         base = os.path.splitext(template_name)[0]
         return f"Результат_{base}"
 
+    def get_output_name(self) -> str | None:
+        """Имя файла для кнопки «Сформировать» - от источника, без памяти по шаблону."""
+        if not self.source_path:
+            return None
+        return f"{Path(self.source_path).stem}_результат"
+
     # ------------------------------------------------------------------
     # Генерация
     # ------------------------------------------------------------------
@@ -107,7 +113,7 @@ class MainController:
         save_dir = Path(self.config.config["last_output_folder"])
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        base_name = self.get_suggested_filename(template_name)
+        base_name = self.get_output_name()
         tmpl_suffix = Path(template_name).suffix.lower()
         out_suffix = tmpl_suffix if tmpl_suffix in (".xls", ".xlsx") else ".docx"
 
