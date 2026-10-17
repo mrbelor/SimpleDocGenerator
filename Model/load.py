@@ -73,27 +73,24 @@ def _visible_sheets(book):
     return [s.name for s in wb.sheets() if s.visibility == 0]  # xlrd (xls)
 
 
-def _clean_names(columns):
+def _clean_names(df):
     """Стрипает имена столбцов и разводит получившихся тёзок.
 
-    Порядок важен: 'Кв' и 'Кв ' для pandas разные имена, разводить ему нечего,
-    и стрип после чтения схлопнул бы их молча. Дедупликацию берём его же —
-    dedup_names это та функция, которой парсеры pandas делают 'Кв' и 'Кв.1'.
+    'Кв' и 'Кв ' для pandas разные имена, и простой стрип схлопнул бы их молча.
+    Поэтому после стрипа разводим тёзок той же dedup_names, которой
+    парсеры pandas делают 'Кв' и 'Кв.1'.
     """
-    stripped = [c.strip() if isinstance(c, str) else c for c in columns]
-    return list(dedup_names(stripped, False))
+    stripped = [c.strip() if isinstance(c, str) else c for c in df.columns]
+    df.columns = list(dedup_names(stripped, False))
+    return df
 
 
 def _read_excel(book, sheet):
-    # проход ради шапки в уже открытой книге почти бесплатный
-    head = book.parse(sheet, dtype=str, nrows=0)
-    return book.parse(sheet, dtype=str, header=0, names=_clean_names(head.columns))
+    return _clean_names(book.parse(sheet, dtype=str))
 
 
 def _read_csv(path):
-    head = pd.read_csv(path, sep=None, engine="python", nrows=0)
-    return pd.read_csv(path, sep=None, engine="python",
-                       header=0, names=_clean_names(head.columns))
+    return _clean_names(pd.read_csv(path, sep=None, engine="python"))
 
 
 @dataclass(frozen=True)
