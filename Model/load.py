@@ -85,7 +85,8 @@ def _clean_names(df):
 
 def _read_excel(book, sheet):
     df = _clean_names(book.parse(sheet, dtype=str))
-    # calamine отдаёт и пустые строки, у которых в Excel есть только формат - хвост отрезаем
+    # calamine отдаёт и строки, которые в Excel выглядят пустыми (формулы, вернувшие "",
+    # или один формат) - такой хвост в конце листа отрезаем
     end = df.last_valid_index()
     return df.iloc[:0] if end is None else df.loc[:end]
 

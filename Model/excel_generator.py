@@ -19,6 +19,8 @@ from pathlib import Path
 import xlrd
 import openpyxl
 from openpyxl.cell.rich_text import CellRichText
+from openpyxl.formula.translate import Translator
+from openpyxl.utils import get_column_letter
 
 from .load import traffic_light
 
@@ -60,8 +62,7 @@ class XlsxGenerator:
             ws_src = wb[sheet_name]
             info = _find_template_rows_xlsx(ws_src)
             if info is None:
-                del wb[sheet_name]  # листы без тегов в результат не попадают
-                continue
+                continue  # лист без тегов остаётся как в шаблоне
 
             header_count, tmpl_rows = info
             ws_out = wb.create_sheet(f"__tmp__{sheet_name}")
@@ -74,13 +75,14 @@ class XlsxGenerator:
 
             out_row = header_count + 1
             for rec_idx, record in enumerate(data_list):
-                _eval = lambda s, r, n=rec_idx + 1: _evaluate(s, r, n, config_path)
+                _eval = lambda s, r, n=rec_idx + 1, **kw: _evaluate(s, r, n, config_path, **kw)
                 for tmpl_rx in tmpl_rows:
                     _clone_row_xlsx(ws_src, tmpl_rx, ws_out, out_row, record, _eval)
                     row_map.setdefault(tmpl_rx, []).append(out_row)
                     out_row += 1
 
             _clone_merges_xlsx(ws_src, ws_out, row_map)
+            _clone_cond_formats_xlsx(ws_src, ws_out, row_map)
 
             for col, dim in ws_src.column_dimensions.items():
                 new_dim = _copy.copy(dim)
@@ -90,7 +92,7 @@ class XlsxGenerator:
             position = wb.sheetnames.index(sheet_name)
             del wb[sheet_name]
             ws_out.title = sheet_name
-            wb.move_sheet(sheet_name, offset=position - len(wb.sheetnames))
+            wb.move_sheet(ws_out, offset=position - wb.index(ws_out))
 
         out_path = _unique_path(Path(output_path).with_suffix(".xlsx"))
         wb.save(str(out_path))
@@ -120,6 +122,26 @@ def _clone_merges_xlsx(ws_src, ws_dst, row_map):
             )
 
 
+def _clone_cond_formats_xlsx(ws_src, ws_dst, row_map):
+    """Переносит условное форматирование по той же карте строк, что и объединения."""
+    for cf in ws_src.conditional_formatting:
+        rows = []
+        for rng in cf.sqref.ranges:
+            targets = sorted(t for r, ts in row_map.items() if rng.min_row <= r <= rng.max_row for t in ts)
+            # подряд идущие строки склеиваем в один диапазон
+            for t in targets:
+                if rows and rows[-1][0] is rng and rows[-1][2] == t - 1:
+                    rows[-1][2] = t
+                else:
+                    rows.append([rng, t, t])
+        if not rows:
+            continue
+        sqref = " ".join(f"{get_column_letter(rng.min_col)}{a}:{get_column_letter(rng.max_col)}{b}"
+                         for rng, a, b in rows)
+        for rule in cf.rules:
+            ws_dst.conditional_formatting.add(sqref, rule)
+
+
 def _clone_row_xlsx(ws_src, src_rx, ws_dst, dst_rx, record=None, evaluate_fn=None):
     for cell in ws_src[src_rx]:
         dst = ws_dst.cell(row=dst_rx, column=cell.column)
@@ -130,10 +152,13 @@ def _clone_row_xlsx(ws_src, src_rx, ws_dst, dst_rx, record=None, evaluate_fn=Non
             value = str(value)
         if (record is not None and evaluate_fn is not None
                 and isinstance(value, str) and "{{" in value):
-            val = evaluate_fn(value, record)
-            dst.value = val if val else None
-        else:
-            dst.value = value
+            value = evaluate_fn(value, record, formula=cell.data_type == "f") or None
+        # формулу протягиваем, как мышкой: относительные ссылки едут за строкой, $ стоят
+        if cell.data_type == "f" and isinstance(value, str) and src_rx != dst_rx:
+            value = Translator(value, origin=cell.coordinate).translate_formula(dst.coordinate)
+        dst.value = value
+        if cell.data_type == "s" and isinstance(value, str):
+            dst.data_type = "s"  # текст остаётся текстом, даже если начинается с "="
         dst._style = cell._style  # style id валиден — один воркбук
 
     if src_rx in ws_src.row_dimensions:
@@ -177,7 +202,7 @@ class XlsGenerator:
             header_count, tmpl_rows = info
 
             ws_out = wb.add_sheet(f"__out__{rs.name}")
-            output_sheets.append((ws_out, rs.name))
+            output_sheets.append((si, ws_out, rs.name))
 
             out_row = 0
             for rx in range(header_count):
@@ -207,12 +232,11 @@ class XlsGenerator:
                         ws_out.merge(offset, offset + row_span - 1, clo, chi - 1)
 
 
-        # убираем шаблонные листы, оставляем только выходные
-        keep = {id(ws) for ws, _ in output_sheets}
-        wb._Workbook__worksheets[:] = [
-            ws for ws in wb._Workbook__worksheets if id(ws) in keep
-        ]
-        for ws_out, name in output_sheets:
+        # шаблонный лист меняем на выходной на том же месте, лист без тегов остаётся как в шаблоне
+        replace = {si: ws_out for si, ws_out, _ in output_sheets}
+        sheets = wb._Workbook__worksheets
+        sheets[:] = [replace.get(si, ws) for si, ws in enumerate(sheets[:rb.nsheets])]
+        for _, ws_out, name in output_sheets:
             ws_out.name = name
 
         out_path = _unique_path(Path(output_path).with_suffix(".xls"))
@@ -290,11 +314,11 @@ def _find_template_rows_xls(rs):
 # общее
 # ---------------------------------------------------------------------------
 
-def _evaluate(template_str: str, record: dict, row_num: int | None = None, config_path=None):
+def _evaluate(template_str: str, record: dict, row_num: int | None = None, config_path=None, formula=False):
     if not isinstance(template_str, str) or not template_str or "{{" not in template_str:
         return template_str
 
-    def _replace(tag: str) -> str:
+    def _value(tag: str) -> str:
         tag = tag.strip()
         if row_num is not None and tag == _TAG_NUM:
             return str(row_num)
@@ -303,7 +327,12 @@ def _evaluate(template_str: str, record: dict, row_num: int | None = None, confi
             return str(traffic_light(record.get(key, ""), spec, config_path=config_path))
         return str(record.get(tag, ""))
 
-    if _OLD_CONCAT_RE.search(template_str):
+    def _replace(tag: str) -> str:
+        # в формуле кавычка внутри строки Excel пишется двойной: оф."А" -> оф.""А""
+        return _value(tag).replace('"', '""') if formula else _value(tag)
+
+    # старая склейка через + бывает только в тексте; в формуле + это сложение Excel
+    if not formula and _OLD_CONCAT_RE.search(template_str):
         parts = re.findall(r'\{\{([^{}]+)\}\}|"([^"]*)"', template_str)
         return "".join(_replace(f) if f else lit for f, lit in parts)
     return _TAG_RE.sub(lambda m: _replace(m.group(1)), template_str)
