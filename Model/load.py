@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 from pandas.io.common import dedup_names
+from python_calamine import SheetVisibleEnum
 
 from .address_module import AddressNormaliser
 
@@ -67,10 +68,7 @@ def _visible_sheets(book):
     Скрытые не показываем и не читаем - это служебка вроде «Раскр. списки»
     (источник выпадающих списков), в данные она попадать не должна.
     """
-    wb = book.book
-    if hasattr(wb, "worksheets"):  # openpyxl (xlsx)
-        return [ws.title for ws in wb.worksheets if ws.sheet_state == "visible"]
-    return [s.name for s in wb.sheets() if s.visibility == 0]  # xlrd (xls)
+    return [m.name for m in book.book.sheets_metadata if m.visible == SheetVisibleEnum.Visible]
 
 
 def _clean_names(df):
@@ -86,7 +84,10 @@ def _clean_names(df):
 
 
 def _read_excel(book, sheet):
-    return _clean_names(book.parse(sheet, dtype=str))
+    df = _clean_names(book.parse(sheet, dtype=str))
+    # calamine отдаёт и пустые строки, у которых в Excel есть только формат - хвост отрезаем
+    end = df.last_valid_index()
+    return df.iloc[:0] if end is None else df.loc[:end]
 
 
 def _read_csv(path):
@@ -122,7 +123,7 @@ def open_source(file_path):
         raise ValueError(f"Формат не поддерживается: {ext}. Ожидается .csv, .xls или .xlsx")
 
     try:
-        with pd.ExcelFile(path) as book:
+        with pd.ExcelFile(path, engine="calamine") as book:
             return Source(path, {s: _read_excel(book, s) for s in _visible_sheets(book)})
     except Exception:
         return Source(path, {path.stem: _read_csv(path)})  # бывает csv под видом .xls
