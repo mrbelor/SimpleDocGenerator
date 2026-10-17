@@ -5,7 +5,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from Model import load_data, get_sheet_names, transform_time, generate_documents
+from Model import open_source, transform_time, generate_documents
 from .config_manager import ConfigManager
 from constants import APP_NAME, ERR_NO_DATA, ERR_NO_TEMPLATE, ERR_TEMPLATE_FILE_MISSING, TEMPLATE_PLACEHOLDER
 
@@ -16,39 +16,37 @@ class MainController:
     def __init__(self) -> None:
         self.config = ConfigManager()
         self.name = APP_NAME
-        self.source_data: list | None = None
-        self.source_path: str | None = None
-        self.source_sheet: str | None = None
+        self.source = None  # Model.Source
+        self.source_sheet: str | None = None  # None - все листы
 
     # ------------------------------------------------------------------
     # Данные
     # ------------------------------------------------------------------
 
-    def get_sheets(self, file_path: str) -> list:
-        """Листы файла данных — для выбора во вьюхе."""
-        return get_sheet_names(file_path)
+    def get_sheets(self) -> list:
+        """Листы загруженного файла - для выбора во вьюхе."""
+        return list(self.source.sheets) if self.source else []
 
-    def load_source(self, file_path: str, sheet: str | None = None) -> tuple:
-        """Загружает Excel/CSV, трансформирует время.
-
-        sheet=None — берутся все листы, иначе только указанный.
-        Адреса тут не трогаем: нормализация только по явному тегу {{Поле:addr}}.
-        """
+    def load_source(self, file_path: str) -> tuple:
+        """Читает Excel/CSV один раз, дальше листы переключаются из памяти."""
         try:
-            raw_data = load_data(file_path, sheet=sheet)
-            data = transform_time(raw_data)
-
-            self.source_data = data
-            self.source_path = file_path
-            self.source_sheet = sheet
+            self.source = open_source(file_path)
+            self.source_sheet = None
             self.config.config["last_data_folder"] = os.path.dirname(file_path)
             self.config.save()
-
-            name = os.path.basename(file_path)
-            return True, f"Выбрано: {name}" if sheet is None else f"Выбрано: {name} → {sheet}"
+            return True, self._source_label()
         except Exception as e:
             traceback.print_exc()
             return False, f"Ошибка: {e}"
+
+    def select_sheet(self, sheet: str | None) -> str:
+        """sheet=None - все листы. Файл не перечитывается."""
+        self.source_sheet = sheet
+        return self._source_label()
+
+    def _source_label(self) -> str:
+        name = self.source.path.name
+        return f"Выбрано: {name}" if self.source_sheet is None else f"Выбрано: {name} → {self.source_sheet}"
 
     # ------------------------------------------------------------------
     # Шаблоны
@@ -76,9 +74,9 @@ class MainController:
 
     def get_output_name(self) -> str | None:
         """Имя файла для кнопки «Сформировать» - от источника, без памяти по шаблону."""
-        if not self.source_path:
+        if self.source is None:
             return None
-        return f"{Path(self.source_path).stem}_результат"
+        return f"{self.source.path.stem}_результат"
 
     # ------------------------------------------------------------------
     # Генерация
@@ -86,7 +84,7 @@ class MainController:
 
     def generate_document(self, template_name: str, custom_path: str | None = None) -> tuple:
         """Генерирует документ из шаблона и загруженных данных."""
-        if not self.source_data:
+        if self.source is None:
             return False, ERR_NO_DATA
         if not template_name or template_name == TEMPLATE_PLACEHOLDER:
             return False, ERR_NO_TEMPLATE
@@ -95,12 +93,17 @@ class MainController:
         if not template_path.exists():
             return False, ERR_TEMPLATE_FILE_MISSING
 
+        # адреса тут не трогаем: нормализация только по явному тегу {{Поле:addr}}
+        data = transform_time(self.source.records(self.source_sheet))
+        if not data:
+            return False, ERR_NO_DATA
+
         output_path = self._resolve_output_path(template_name, custom_path)
         self._persist_output_meta(template_name, output_path, custom_path)
 
         try:
             addr_cfg = str(self.config.address_config_file)
-            generate_documents(self.source_data, str(template_path), output_path, config_path=addr_cfg)
+            generate_documents(data, str(template_path), output_path, config_path=addr_cfg)
             return True, "Успешно сохранено"
         except Exception as e:
             traceback.print_exc()

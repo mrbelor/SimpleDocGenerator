@@ -4,6 +4,7 @@ import datetime
 import math
 import os
 import re
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -60,35 +61,16 @@ def _clean_path(file_path):
     return Path(str(file_path).strip(" '\""))
 
 
-def get_sheet_names(file_path):
-    """Видимые листы книги.
+def _visible_sheets(book):
+    """Видимые листы открытой книги.
 
-    Скрытые не показываем и не читаем — это служебка вроде «Раскр. списки»
+    Скрытые не показываем и не читаем - это служебка вроде «Раскр. списки»
     (источник выпадающих списков), в данные она попадать не должна.
-    Для csv и нечитаемых файлов — пустой список.
     """
-    path = _clean_path(file_path)
-    ext = path.suffix.lower()
-    if not path.exists() or ext not in (".xls", ".xlsx"):
-        return []
-
-    try:
-        if ext == ".xls":
-            import xlrd
-            book = xlrd.open_workbook(path)
-            try:
-                return [s.name for s in book.sheets() if s.visibility == 0]
-            finally:
-                book.release_resources()
-
-        import openpyxl
-        book = openpyxl.load_workbook(path, read_only=True)
-        try:
-            return [ws.title for ws in book.worksheets if ws.sheet_state == "visible"]
-        finally:
-            book.close()
-    except Exception:
-        return []
+    wb = book.book
+    if hasattr(wb, "worksheets"):  # openpyxl (xlsx)
+        return [ws.title for ws in wb.worksheets if ws.sheet_state == "visible"]
+    return [s.name for s in wb.sheets() if s.visibility == 0]  # xlrd (xls)
 
 
 def _clean_names(columns):
@@ -102,10 +84,10 @@ def _clean_names(columns):
     return list(dedup_names(stripped, False))
 
 
-def _read_excel(path, sheet):
-    head = pd.read_excel(path, sheet_name=sheet, dtype=str, nrows=0)
-    return pd.read_excel(path, sheet_name=sheet, dtype=str,
-                         header=0, names=_clean_names(head.columns))
+def _read_excel(book, sheet):
+    # проход ради шапки в уже открытой книге почти бесплатный
+    head = book.parse(sheet, dtype=str, nrows=0)
+    return book.parse(sheet, dtype=str, header=0, names=_clean_names(head.columns))
 
 
 def _read_csv(path):
@@ -114,35 +96,39 @@ def _read_csv(path):
                        header=0, names=_clean_names(head.columns))
 
 
-def load_data(file_path, sheet=None):
-    """Загружает Excel или CSV-файл, возвращает список словарей.
+@dataclass(frozen=True)
+class Source:
+    """Файл данных, прочитанный один раз: видимые листы лежат в памяти.
 
-    sheet=None — все листы читаются и склеиваются (поведение по умолчанию),
-    иначе берётся только указанный лист.
+    Новый файл - новый объект, ничего не перечитывается и не подгружается.
     """
+    path: Path
+    sheets: dict  # {лист: DataFrame}
+
+    def records(self, sheet=None):
+        """Список словарей: sheet=None - все листы подряд, иначе один лист."""
+        frames = list(self.sheets.values()) if sheet is None else [self.sheets[sheet]]
+        rows = pd.concat(frames, ignore_index=True).fillna("").to_dict(orient="records")
+        return [{k: _normalize_date_value(v) for k, v in row.items()} for row in rows]
+
+
+def open_source(file_path):
+    """Читает Excel или CSV целиком, книга открывается ровно один раз."""
     path = _clean_path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Файл не найден: {path}")
 
     ext = path.suffix.lower()
     if ext == ".csv":
-        df = _read_csv(path)
-    elif ext in (".xls", ".xlsx") and sheet is not None:
-        # лист выбран явно — читаем только его и падаем, если не вышло:
-        # подсунуть вместо него содержимое всего файла было бы хуже ошибки
-        df = _read_excel(path, sheet)
-    elif ext in (".xls", ".xlsx"):
-        try:
-            visible = get_sheet_names(path)
-            frames = [_read_excel(path, s) for s in visible] if visible else [_read_excel(path, 0)]
-            df = pd.concat(frames, ignore_index=True)
-        except Exception:
-            df = _read_csv(path)  # бывает csv под видом .xls
-    else:
+        return Source(path, {path.stem: _read_csv(path)})
+    if ext not in (".xls", ".xlsx"):
         raise ValueError(f"Формат не поддерживается: {ext}. Ожидается .csv, .xls или .xlsx")
 
-    records = df.fillna("").to_dict(orient="records")
-    return [{k: _normalize_date_value(v) for k, v in row.items()} for row in records]
+    try:
+        with pd.ExcelFile(path) as book:
+            return Source(path, {s: _read_excel(book, s) for s in _visible_sheets(book)})
+    except Exception:
+        return Source(path, {path.stem: _read_csv(path)})  # бывает csv под видом .xls
 
 
 def _transform_time_value(val):

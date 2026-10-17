@@ -359,20 +359,22 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if path:
             self.process_data_file(path)
 
-    def process_data_file(self, path: str, sheet: str | None = None) -> None:
-        success, msg = self.controller.load_source(path, sheet=sheet)
+    def process_data_file(self, path: str) -> None:
+        success, msg = self.controller.load_source(path)
         if success:
-            self.data_path_label.configure(text=msg, text_color="#2ecc71")
-            self.after(2000, lambda: self.data_path_label.configure(text_color=("black", "white")))
-            if sheet is None:
-                self.update_sheets_list(path)
+            self._flash_data_label(msg)
+            self.update_sheets_list()
             self.update_save_info()
         else:
             self.show_status(msg, "red")
 
-    def update_sheets_list(self, path: str) -> None:
+    def _flash_data_label(self, msg: str) -> None:
+        self.data_path_label.configure(text=msg, text_color="#2ecc71")
+        self.after(2000, lambda: self.data_path_label.configure(text_color=("black", "white")))
+
+    def update_sheets_list(self) -> None:
         """Показывает выбор листа только когда листов больше одного."""
-        sheets = self.controller.get_sheets(path)
+        sheets = self.controller.get_sheets()
         if len(sheets) > 1:
             self.sheet_dropdown.configure(values=[SHEET_ALL] + sheets)
             self.sheet_var.set(SHEET_ALL)
@@ -381,12 +383,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.sheet_row.pack_forget()
 
     def on_sheet_change(self, choice: str) -> None:
-        """Перечитывает уже выбранный файл с новым листом."""
-        if self.controller.source_path:
-            self.process_data_file(
-                self.controller.source_path,
-                sheet=None if choice == SHEET_ALL else choice,
-            )
+        """Переключает лист без перечитывания файла."""
+        self._flash_data_label(self.controller.select_sheet(None if choice == SHEET_ALL else choice))
 
     # ------------------------------------------------------------------
     # Шаблоны

@@ -11,7 +11,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-from Model import load_data, transform_time, generate_documents
+from Model import open_source, transform_time, generate_documents
 
 CFG_PATH = HERE / "address_module" / "address_config.json"
 OUT_DIR = ROOT / "deleteme"  # в .gitignore
@@ -29,7 +29,7 @@ def run(data_path, template_path, output_path=None):
         output_path = OUT_DIR / f"res_{template_path.stem}{template_path.suffix}"
 
     # то же, что делает контроллер: загрузка + время, адреса только по тегу :addr
-    data = transform_time(load_data(data_path))
+    data = transform_time(open_source(data_path).records())
     result = generate_documents(data, str(template_path), str(output_path), config_path=str(CFG_PATH))
     print(f"{template_path.name}: {len(data)} записей -> {result}")
 
