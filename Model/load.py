@@ -16,7 +16,7 @@ from .address_module import AddressNormaliser
 
 # Регулярки для парсинга диапазонов/одиночных значений времени
 _RE_TIME_RANGE = re.compile(r"^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$")
-_RE_TIME_SINGLE = re.compile(r"^(\d{1,2}:\d{2})$")
+_RE_TIME_SINGLE = re.compile(r"^(\d{1,2}:\d{2})(?::00)?$")  # :00 - так приходит ячейка-время из Excel
 
 
 # Кэшированный фабричный метод для AddressNormaliser.
@@ -146,7 +146,8 @@ def transform_time(data, time_key="Время"):
     result = []
     for item in data:
         item = item.copy()
-        item[time_key] = _transform_time_value(item.get(time_key))
+        if time_key in item:  # нет столбца - нет поля, как у любого другого
+            item[time_key] = _transform_time_value(item[time_key])
         result.append(item)
     return result
 
