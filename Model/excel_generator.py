@@ -13,7 +13,7 @@
 
 import copy as _copy
 import re
-import time
+from functools import lru_cache
 from pathlib import Path
 
 import xlrd
@@ -37,11 +37,12 @@ _SPECS = ("addr", "time")  # {{Поле:addr}} — только по явном�
 class ExcelGenerator:
     """выбирает правильный генератор по расширению шаблона"""
 
-    def generate(self, data_list: list, template_path, output_path, config_path=None) -> Path:
+    def generate(self, data_list: list, template_path, config_path=None, progress=None):
+        """Собирает книгу и возвращает её несохранённой: сохраняет shablon.py."""
         template_path = Path(template_path)
         if template_path.suffix.lower() == ".xls":
-            return XlsGenerator().generate(data_list, template_path, output_path, config_path)
-        return XlsxGenerator().generate(data_list, template_path, output_path, config_path)
+            return XlsGenerator().generate(data_list, template_path, config_path, progress)
+        return XlsxGenerator().generate(data_list, template_path, config_path, progress)
 
 
 # ---------------------------------------------------------------------------
@@ -50,10 +51,10 @@ class ExcelGenerator:
 
 class XlsxGenerator:
 
-    def generate(self, data_list: list, template_path, output_path, config_path=None) -> Path:
-        return self._from_xlsx(data_list, Path(template_path), output_path, config_path)
+    def generate(self, data_list: list, template_path, config_path=None, progress=None):
+        return self._from_xlsx(data_list, Path(template_path), config_path, progress)
 
-    def _from_xlsx(self, data_list: list, template_path: Path, output_path, config_path=None) -> Path:
+    def _from_xlsx(self, data_list: list, template_path: Path, config_path=None, progress=None):
         # rich_text=True — иначе разный кегль и цвет внутри одной ячейки
         # схлопываются в плоскую строку ещё при чтении
         wb = openpyxl.load_workbook(str(template_path), rich_text=True)
@@ -68,7 +69,11 @@ class XlsxGenerator:
             ws_out = wb.create_sheet(f"__tmp__{sheet_name}")
 
             for rx in range(1, header_count + 1):
-                _clone_row_xlsx(ws_src, rx, ws_out, rx)
+                _clone_row_xlsx(ws_src, ws_src[rx], ws_out, rx)
+
+            # ws_src[rx] каждый раз перебирает все ячейки листа (ищет max_column),
+            # поэтому строки шаблона берём один раз, а не на каждую запись
+            tmpl_cells = {rx: ws_src[rx] for rx in tmpl_rows}
 
             # куда уехала каждая исходная строка: шапка на место, шаблон размножился
             row_map = {rx: [rx] for rx in range(1, header_count + 1)}
@@ -77,9 +82,11 @@ class XlsxGenerator:
             for rec_idx, record in enumerate(data_list):
                 _eval = lambda s, r, n=rec_idx + 1, **kw: _evaluate(s, r, n, config_path, **kw)
                 for tmpl_rx in tmpl_rows:
-                    _clone_row_xlsx(ws_src, tmpl_rx, ws_out, out_row, record, _eval)
+                    _clone_row_xlsx(ws_src, tmpl_cells[tmpl_rx], ws_out, out_row, record, _eval)
                     row_map.setdefault(tmpl_rx, []).append(out_row)
                     out_row += 1
+                if progress:
+                    progress(rec_idx + 1, len(data_list))
 
             _clone_merges_xlsx(ws_src, ws_out, row_map)
             _clone_cond_formats_xlsx(ws_src, ws_out, row_map)
@@ -94,9 +101,7 @@ class XlsxGenerator:
             ws_out.title = sheet_name
             wb.move_sheet(ws_out, offset=position - wb.index(ws_out))
 
-        out_path = _unique_path(Path(output_path).with_suffix(".xlsx"))
-        wb.save(str(out_path))
-        return out_path
+        return wb
 
 
 def _find_template_rows_xlsx(ws):
@@ -142,8 +147,15 @@ def _clone_cond_formats_xlsx(ws_src, ws_dst, row_map):
             ws_dst.conditional_formatting.add(sqref, rule)
 
 
-def _clone_row_xlsx(ws_src, src_rx, ws_dst, dst_rx, record=None, evaluate_fn=None):
-    for cell in ws_src[src_rx]:
+@lru_cache(maxsize=256)
+def _translator(formula, origin):
+    """Разбор формулы дорогой, а без тегов она одна и та же в каждой строке - разбираем один раз."""
+    return Translator(formula, origin=origin)
+
+
+def _clone_row_xlsx(ws_src, cells, ws_dst, dst_rx, record=None, evaluate_fn=None):
+    src_rx = cells[0].row
+    for cell in cells:
         dst = ws_dst.cell(row=dst_rx, column=cell.column)
         value = cell.value
         # тег внутри разноформатной ячейки: подставляем как обычный текст,
@@ -155,7 +167,7 @@ def _clone_row_xlsx(ws_src, src_rx, ws_dst, dst_rx, record=None, evaluate_fn=Non
             value = evaluate_fn(value, record, formula=cell.data_type == "f") or None
         # формулу протягиваем, как мышкой: относительные ссылки едут за строкой, $ стоят
         if cell.data_type == "f" and isinstance(value, str) and src_rx != dst_rx:
-            value = Translator(value, origin=cell.coordinate).translate_formula(dst.coordinate)
+            value = _translator(value, cell.coordinate).translate_formula(dst.coordinate)
         dst.value = value
         if cell.data_type == "s" and isinstance(value, str):
             dst.data_type = "s"  # текст остаётся текстом, даже если начинается с "="
@@ -174,7 +186,7 @@ class XlsGenerator:
     все стили), добавляем выходной лист В ТОМ ЖЕ воркбуке и пишем в него ячейки
     через put_cell с теми же xf_idx — никакой ручной трансляции стилей."""
 
-    def generate(self, data_list: list, template_path, output_path, config_path=None) -> Path:
+    def generate(self, data_list: list, template_path, config_path=None, progress=None):
         from xlutils.copy import copy as xl_copy
 
         template_path = Path(template_path)
@@ -213,6 +225,8 @@ class XlsGenerator:
                 for tmpl_rx in tmpl_rows:
                     _dup_row(rs, ws_src, tmpl_rx, ws_out, out_row, record, rec_idx + 1, config_path)
                     out_row += 1
+                if progress:
+                    progress(rec_idx + 1, len(data_list))
 
             for cx, colinfo in rs.colinfo_map.items():
                 ws_out.col(cx).width = colinfo.width
@@ -239,9 +253,7 @@ class XlsGenerator:
         for _, ws_out, name in output_sheets:
             ws_out.name = name
 
-        out_path = _unique_path(Path(output_path).with_suffix(".xls"))
-        wb.save(str(out_path))
-        return out_path
+        return wb
 
 
 class _RawXf:
@@ -336,12 +348,3 @@ def _evaluate(template_str: str, record: dict, row_num: int | None = None, confi
         parts = re.findall(r'\{\{([^{}]+)\}\}|"([^"]*)"', template_str)
         return "".join(_replace(f) if f else lit for f, lit in parts)
     return _TAG_RE.sub(lambda m: _replace(m.group(1)), template_str)
-
-
-
-def _unique_path(path: Path) -> Path:
-    if path.exists():
-        return path.with_stem(f"{path.stem}_{int(time.time())}")
-    return path
-
-

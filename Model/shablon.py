@@ -1,8 +1,8 @@
 """Генерация Word-документов из шаблона и данных."""
 
 import io
+import os
 import re
-import time
 from pathlib import Path
 
 from docxtpl import DocxTemplate
@@ -63,24 +63,41 @@ def generate_documents(
     path_to_template: str,
     output_path: str = "./result.docx",
     config_path: str | None = None,
+    progress=None,
 ) -> Path:
-    """генерирует документ из шаблона и данных; если шаблон excel — идёт в ExcelGenerator, иначе Word."""
+    """генерирует документ из шаблона и данных; если шаблон excel - идёт в ExcelGenerator, иначе Word.
+
+    progress(готово, всего) зовётся после каждой записи (в :table - после каждой группы)
+    из того потока, где идёт генерация. готово == всего: осталось только записать файл.
+    """
     if not data:
         return None
 
-    if Path(path_to_template).suffix.lower() in (".xls", ".xlsx"):
-        from .excel_generator import ExcelGenerator
-        return ExcelGenerator().generate(data, path_to_template, output_path, config_path)
-
     output_path = Path(output_path)
+    suffix = Path(path_to_template).suffix.lower()
+    if suffix in (".xls", ".xlsx"):
+        from .excel_generator import ExcelGenerator
+        doc = ExcelGenerator().generate(data, path_to_template, config_path, progress)
+        output_path = output_path.with_suffix(suffix)  # тихой конвертации форматов нет
+    else:
+        doc = _compose_word(data, path_to_template, config_path, progress)
 
+    # свободное имя подбирает контроллер; здесь пишем ровно туда, куда сказали.
+    # Пишем в <имя>.part и переименовываем одним ходом: прерванная запись
+    # (закрыли окно, упала программа) не оставит недописанный файл с настоящим именем
+    part = output_path.with_name(f"{output_path.name}.part")
+    doc.save(str(part))
+    os.replace(part, output_path)
+    return output_path
+
+
+def _compose_word(data: list, path_to_template: str, config_path: str | None, progress) -> Composer:
+    """Все записи в один Word-документ: ветка {{:table}} или по документу на запись."""
     from .table import TableGenerator
-    tg = TableGenerator()
-
     import sys
-    table_result = tg.process_table_logic(data, path_to_template, output_path, sys.modules[__name__], config_path=config_path)
-    if table_result:
-        return table_result
+    table_doc = TableGenerator().process_table_logic(data, path_to_template, sys.modules[__name__], config_path=config_path, progress=progress)
+    if table_doc:
+        return table_doc
 
     # Штатная логика: первый документ инициализирует Composer
     tpl = MyDocxTemplate(path_to_template)
@@ -89,22 +106,13 @@ def generate_documents(
     tpl.save(stream)
     composer = Composer(Document(stream))
 
-    for item in data[1:]:
+    for done, item in enumerate(data[1:], 2):
         tpl = MyDocxTemplate(path_to_template)
         _safe_render(tpl, item, config_path=config_path)
         stream = io.BytesIO()
         tpl.save(stream)
         composer.doc.add_page_break()
         composer.append(Document(stream))
-
-    final_path = _unique_path(output_path)
-    composer.save(final_path)
-    return final_path
-
-
-def _unique_path(path: Path) -> Path:
-    """Если файл уже существует — добавляет unix timestamp к имени."""
-    if path.exists():
-        return path.with_stem(f"{path.stem}_{int(time.time())}")
-    return path
-
+        if progress:
+            progress(done, len(data))
+    return composer

@@ -1,10 +1,12 @@
 # this file is fully vibecoded
 
 import os
+import threading
+import traceback
 
 import customtkinter as ctk
 from PIL import Image
-from tkinter import filedialog as fd
+from tkinter import filedialog as fd, messagebox
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
 from Controller.main_controller import MainController
@@ -30,6 +32,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.controller = MainController()
         self._reset_vis_job = None
+        self._task = None  # поток текущей фоновой работы
+        self._progress = None  # (готово, всего) от потока генерации
 
         appearance = self.controller.config.config.get("appearance_mode", "dark")
         ctk.set_appearance_mode(appearance)
@@ -53,6 +57,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.dnd_bind("<<Drop>>", self._on_drop)
 
         self.bind_all("<Button-1>", self.hide_error_popup)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------------
     # Инициализация иконок
@@ -83,6 +88,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._build_header()
         self._build_main_frame()
         self._build_action_buttons()
+        self.progress_bar = ctk.CTkProgressBar(self)  # виден, пока идёт фоновая работа
         self.status_label = ctk.CTkLabel(self, text="", font=("Arial", 12))
         self.status_label.pack(pady=(0, 10))
         self.update_save_info()
@@ -360,7 +366,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.process_data_file(path)
 
     def process_data_file(self, path: str) -> None:
-        success, msg = self.controller.load_source(path)
+        self._in_background(lambda: self.controller.load_source(path), self._data_loaded, f"Читаю {os.path.basename(path)}")
+
+    def _data_loaded(self, success: bool, msg: str) -> None:
         if success:
             self._flash_data_label(msg)
             self.update_sheets_list()
@@ -441,12 +449,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if not self._is_template_selected():
             self.show_error_popup("Шаблон не выбран!")
             return
-        self._start_loading()
-        self.after(100, self._run_generate)
-
-    def _run_generate(self) -> None:
-        success, msg = self.controller.generate_document(self.template_var.get())
-        self._finish_generation(success, msg)
+        self._generate(self.template_var.get())
 
     def generate_as(self) -> None:
         self.hide_error_popup()
@@ -461,7 +464,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         tmpl_suffix = os.path.splitext(template)[1].lower()
         if tmpl_suffix in (".xls", ".xlsx"):
-            out_ext, filetypes = ".xlsx", [("Excel", "*.xlsx")]
+            out_ext, filetypes = tmpl_suffix, [("Excel", f"*{tmpl_suffix}")]  # .xls даёт .xls
         else:
             out_ext, filetypes = ".docx", [("Word Document", "*.docx")]
 
@@ -472,12 +475,17 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             filetypes=filetypes,
         )
         if path:
-            self._start_loading()
-            self.after(100, lambda: self._run_generate_as(template, path))
+            self._generate(template, path)
 
-    def _run_generate_as(self, template: str, path: str) -> None:
-        success, msg = self.controller.generate_document(template, custom_path=path)
-        self._finish_generation(success, msg)
+    def _generate(self, template: str, path: str | None = None) -> None:
+        work = lambda: self.controller.generate_document(template, custom_path=path, progress=self._set_progress)
+        name = os.path.basename(path) if path else self.controller.get_output_name()
+        if self._in_background(work, self._finish_generation, f"Формирую {name}"):
+            self._start_loading()
+
+    def _set_progress(self, done: int, total: int) -> None:
+        """Зовётся из потока генерации: только запоминаем, рисует _poll_task."""
+        self._progress = (done, total)
 
     def _finish_generation(self, success: bool, msg: str) -> None:
         if success:
@@ -489,6 +497,72 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             else:
                 self.show_status(msg, "red")
         self.update_save_info()
+
+    # ------------------------------------------------------------------
+    # Фоновая работа
+    # ------------------------------------------------------------------
+
+    def _in_background(self, work, done, text: str) -> bool:
+        """work() в отдельном потоке, done(*результат) в главном, когда поток закончит.
+
+        Окно не замирает. Виджеты трогает только главный поток (tkinter не потокобезопасен):
+        поток кладёт результат и self._progress, главный забирает их опросом в _poll_task.
+        Задача одна за раз: пока идёт прошлая, новая не стартует (возвращаем False).
+        """
+        if self._task and self._task.is_alive():
+            self.show_status("Подождите, идёт обработка...", "orange")
+            return False
+        box = []
+
+        def target():
+            try:
+                box.append(work())
+            except Exception as e:  # иначе окно навсегда останется в «Загрузке»
+                traceback.print_exc()
+                box.append((False, f"Ошибка: {e}"))
+
+        self._progress = None
+        self.progress_bar.configure(mode="indeterminate")
+        self.progress_bar.start()
+        # полоска у нижнего края окна, под статусом; place не двигает остальную вёрстку
+        self.progress_bar.place(relx=0.5, rely=1, y=-2, anchor="s", relwidth=0.84)
+        self._task = threading.Thread(target=target, daemon=True)
+        self._task.start()
+        # первый опрос - после выхода из обработчика: даже мгновенная работа
+        # завершится (done) позже того, что вызывающий сделает после старта
+        self._task_text = text  # для вопроса при закрытии окна
+        self.after(0, lambda: self._poll_task(box, done, text))
+        return True
+
+    def _poll_task(self, box: list, done, text: str) -> None:
+        if not self._task.is_alive():
+            self.progress_bar.stop()
+            self.progress_bar.place_forget()
+            self.show_status("", "gray")
+            done(*box[0])
+            return
+        status = f"{text}..."
+        if self._progress:  # процент знает генерация; чтение файла крутится без него
+            ready, total = self._progress
+            if ready < total:
+                self.progress_bar.stop()
+                self.progress_bar.configure(mode="determinate")
+                self.progress_bar.set(ready / total)
+                status = f"{text}: {ready} из {total}"
+            else:  # записи готовы, файл пишется на диск - сколько осталось, неизвестно
+                self.progress_bar.configure(mode="indeterminate")
+                self.progress_bar.start()
+                status = "Сохраняю файл..."
+        self.show_status(status, "gray")
+        self.after(100, lambda: self._poll_task(box, done, text))
+
+    def _on_close(self) -> None:
+        """Закрытие окна убивает фоновый поток, файл не допишется - поэтому спрашиваем."""
+        if self._task and self._task.is_alive() and not messagebox.askyesno(
+                "Идёт обработка", f"{self._task_text}...\n\nЗакрыть программу? Работа прервётся, файл не сохранится.",
+                icon="warning"):
+            return
+        self.destroy()
 
     # ------------------------------------------------------------------
     # Анимация кнопок

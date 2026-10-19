@@ -33,10 +33,10 @@ _TableSpec.__new__.__defaults__ = ("УК", None, "Адрес объекта", "�
 class TableGenerator:
     """Обрабатывает шаблоны с тегом {{...:table}}: группирует данные и строит таблицу."""
 
-    def process_table_logic(self, data_list: list, path_to_template, output_path, template_module, config_path=None):
+    def process_table_logic(self, data_list: list, path_to_template, template_module, config_path=None, progress=None):
         """
         Точка входа из shablon.py.
-        Возвращает Path к файлу если шаблон содержит {{...:table}}, иначе False.
+        Возвращает собранный документ (сохраняет shablon.py), если шаблон содержит {{...:table}}, иначе False.
         """
         spec = self._load_marker_spec(path_to_template)
         if spec is None:
@@ -47,7 +47,7 @@ class TableGenerator:
         from docxcompose.composer import Composer
         composer = None
 
-        for group_item in grouped:
+        for done, group_item in enumerate(grouped, 1):
             out_stream = self._render_group(group_item, path_to_template, template_module, config_path, spec)
 
             if composer is None:
@@ -55,10 +55,10 @@ class TableGenerator:
             else:
                 composer.doc.add_page_break()
                 composer.append(Document(out_stream))
+            if progress:
+                progress(done, len(grouped))
 
-        final_path = self._resolve_final_path(output_path)
-        composer.save(final_path)
-        return final_path
+        return composer
 
     # ------------------------------------------------------------------
     # Группировка данных по УК
@@ -335,11 +335,3 @@ class TableGenerator:
                     for run in paragraph.runs:
                         run.font.name = _TABLE_FONT
 
-    @staticmethod
-    def _resolve_final_path(output_path) -> object:
-        import time
-        from pathlib import Path
-        output_path = Path(output_path)
-        if output_path.exists():
-            return output_path.with_stem(f"{output_path.stem}_{int(time.time())}")
-        return output_path

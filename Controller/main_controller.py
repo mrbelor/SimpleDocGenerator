@@ -82,8 +82,8 @@ class MainController:
     # Генерация
     # ------------------------------------------------------------------
 
-    def generate_document(self, template_name: str, custom_path: str | None = None) -> tuple:
-        """Генерирует документ из шаблона и загруженных данных."""
+    def generate_document(self, template_name: str, custom_path: str | None = None, progress=None) -> tuple:
+        """Генерирует документ из шаблона и загруженных данных. progress - см. generate_documents."""
         if self.source is None:
             return False, ERR_NO_DATA
         if not template_name or template_name == TEMPLATE_PLACEHOLDER:
@@ -103,7 +103,7 @@ class MainController:
 
         try:
             addr_cfg = str(self.config.address_config_file)
-            generate_documents(data, str(template_path), output_path, config_path=addr_cfg)
+            generate_documents(data, str(template_path), output_path, config_path=addr_cfg, progress=progress)
             return True, "Успешно сохранено"
         except Exception as e:
             traceback.print_exc()
