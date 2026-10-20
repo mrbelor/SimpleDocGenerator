@@ -15,6 +15,7 @@ from constants import (
     TEMPLATE_PLACEHOLDER,
     POPUP_ERRORS,
     SHEET_ALL,
+    VERSION,
 )
 
 # Поддерживаемые форматы при drag-n-drop
@@ -99,6 +100,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         ctk.CTkLabel(header, image=self.icon_logo, text="").pack(side="left", padx=(0, 8))
         ctk.CTkLabel(header, text="SimpleDocGenerator", font=("Arial", 15, "bold")).pack(side="left")
+        ctk.CTkLabel(header, text=VERSION, font=("Arial", 10), text_color="gray").pack(side="left", padx=(6, 0), pady=(4, 0))
 
         mode = self.controller.config.config.get("appearance_mode", "dark")
         self.theme_btn = ctk.CTkButton(

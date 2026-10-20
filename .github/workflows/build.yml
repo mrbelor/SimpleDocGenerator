@@ -1,0 +1,65 @@
+name: Сборка exe
+
+# собирается только по тегу: git tag v1.4.0 && git push origin v1.4.0
+# кнопка Run workflow на вкладке Actions - сборка без релиза, exe в артефактах запуска
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # нужна вся история с тегами для git describe
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Зависимости
+        run: pip install -r requirements.txt
+
+      - name: Номер версии
+        shell: bash
+        # на коммите с тегом - ровно тег (v1.4.0), иначе v1.3.0-8-gf15ea52
+        run: echo "VERSION = \"$(git describe --tags --always)\"" > _version.py
+
+      - name: Сборка
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --icon "exe_belly/app_icon.ico"
+          --add-data "exe_belly;exe_belly"
+          --collect-all docxcompose
+          --collect-all customtkinter
+          --collect-all tkinterdnd2
+          --name "DocGenerator" main.py
+
+      - name: Exe в артефакты запуска
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocGenerator
+          path: dist/DocGenerator.exe
+
+      - name: Черновик релиза
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # перезапуск сборки того же тега: старый черновик сносим (тег остаётся).
+          # опубликованный релиз не трогаем никогда - отсюда проверка на isDraft
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null)" = "true" ]; then
+            gh release delete "$TAG" --yes
+          fi
+
+          gh release create "$TAG" --draft --verify-tag --title "$TAG" dist/DocGenerator.exe

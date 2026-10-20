@@ -2,6 +2,12 @@
 
 APP_NAME = "DocGenerator"
 
+# номер версии вшивает сборка: build.yml и батник пишут _version.py из git-тега
+try:
+    from _version import VERSION
+except ImportError:
+    VERSION = "v0.0.0 (dev)"  # запуск из исходников
+
 # Плейсхолдеры для дропдауна шаблонов (не реальные файлы)
 TEMPLATE_PLACEHOLDER = "Шаблон не выбран"
 TEMPLATE_NOT_FOUND = "Файл не найден"

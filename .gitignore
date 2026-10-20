@@ -1,5 +1,6 @@
 # Драфты
 release_draft.txt
+_version.py
 commit_note.txt
 
 # PyInstaller and Build outputs
