@@ -137,7 +137,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.data_separator.pack(fill="x", padx=20, pady=15)
 
         # Секция ШАБЛОН
-        ctk.CTkLabel(frame, text="ШАБЛОН (Word)", font=("Arial", 14, "bold")).pack(pady=5)
+        ctk.CTkLabel(frame, text="ШАБЛОН (Word / Excel)", font=("Arial", 14, "bold")).pack(pady=5)
         self._build_template_controls(frame)
 
         ctk.CTkButton(

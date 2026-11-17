@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from constants import APP_NAME
+from Model.sign import SIGN_PLACEHOLDER, SIGNS_DIR
 
 
 class ConfigManager:
@@ -35,6 +36,7 @@ class ConfigManager:
             self.templates_dir.mkdir(parents=True, exist_ok=True)
 
         self._sync_templates()
+        self._sync_sign_placeholder()
 
         self.defaults = self._load_belly_defaults()
         self.config = self.load()
@@ -84,6 +86,14 @@ class ConfigManager:
                 dest = self.templates_dir / source.name
                 if not dest.exists() or source.stat().st_mtime > dest.stat().st_mtime:
                     shutil.copy2(source, dest)
+
+    def _sync_sign_placeholder(self) -> None:
+        """папка Подписи ({{Поле:sign}}) и картинка-заглушка в ней, чтобы было чем отметить место подписи"""
+        signs = self.templates_dir / SIGNS_DIR
+        signs.mkdir(exist_ok=True)
+        source, dest = self.belly_dir / SIGN_PLACEHOLDER, signs / SIGN_PLACEHOLDER
+        if source.exists() and (not dest.exists() or source.stat().st_mtime > dest.stat().st_mtime):
+            shutil.copy2(source, dest)
 
     def _load_belly_defaults(self) -> dict:
         belly_config = self.belly_dir / "config.json"

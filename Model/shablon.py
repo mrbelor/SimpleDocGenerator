@@ -12,19 +12,25 @@ from jinja2 import DebugUndefined, UndefinedError, Environment
 import jinja2.exceptions
 
 from .load import traffic_light, get_available_specifiers
+from .sign import Signer, mark_placeholders, swap_placeholders, text_signs
 
 
 class MyDocxTemplate(DocxTemplate):
-    """DocxTemplate с поддержкой спецификаторов {{Ключ:addr}}, {{Ключ:time}}, {{:table}}."""
+    """DocxTemplate с поддержкой спецификаторов {{Ключ:addr}}, {{Ключ:time}}, {{Ключ:sign}}, {{:table}}."""
 
     def render_xml_part(self, src_xml, part, context, jinja_env):
+        src_xml = mark_placeholders(src_xml)  # заглушка подписи: её {{Ключ:sign}} не для jinja
         # {{Ключ:addr}} -> {{Ключ__addr}}, {{:table}} -> {{__table}}
         src_xml = re.sub(r"(\{\{[^}]*?):([^}]*?\}\})", r"\1__\2", src_xml)
         return super().render_xml_part(src_xml, part, context, jinja_env)
 
 
-def _safe_render(tpl: MyDocxTemplate, context: dict, config_path: str | None = None) -> None:
-    """Рендерит шаблон с расширенным контекстом (спецификаторы + raw-значения)."""
+def _safe_render(tpl: MyDocxTemplate, context: dict, config_path: str | None = None,
+                 signer: Signer | None = None, row: int = 1) -> None:
+    """Рендерит шаблон с расширенным контекстом (спецификаторы + raw-значения).
+
+    signer - подписи {{Ключ:sign}} (row - номер записи для сообщений об ошибке); без него подписей нет.
+    """
     jinja_env = Environment(undefined=DebugUndefined)
     specifiers = get_available_specifiers()
 
@@ -41,6 +47,8 @@ def _safe_render(tpl: MyDocxTemplate, context: dict, config_path: str | None = N
         for spec in specifiers:
             expanded[f"{key}__{spec}"] = traffic_light(val, spec, config_path=config_path)
         expanded[f"{key}__raw"] = val
+    if signer:
+        expanded.update(text_signs(tpl, context, signer, row))
 
     try:
         tpl.render(expanded, jinja_env=jinja_env)
@@ -56,6 +64,8 @@ def _safe_render(tpl: MyDocxTemplate, context: dict, config_path: str | None = N
             "Ошибка в шаблоне {{ ... }}: нельзя использовать пробелы.\n"
             "Замените пробелы на '_'. Например: {{Адрес_УК}}"
         ) from e
+    if signer:
+        swap_placeholders(tpl, context, row, signer)
 
 
 def generate_documents(
@@ -100,15 +110,16 @@ def _compose_word(data: list, path_to_template: str, config_path: str | None, pr
         return table_doc
 
     # Штатная логика: первый документ инициализирует Composer
+    signer = Signer(path_to_template)
     tpl = MyDocxTemplate(path_to_template)
-    _safe_render(tpl, data[0], config_path=config_path)
+    _safe_render(tpl, data[0], config_path=config_path, signer=signer, row=1)
     stream = io.BytesIO()
     tpl.save(stream)
     composer = Composer(Document(stream))
 
     for done, item in enumerate(data[1:], 2):
         tpl = MyDocxTemplate(path_to_template)
-        _safe_render(tpl, item, config_path=config_path)
+        _safe_render(tpl, item, config_path=config_path, signer=signer, row=done)
         stream = io.BytesIO()
         tpl.save(stream)
         composer.doc.add_page_break()

@@ -231,3 +231,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# заметки Claude: история и задачи
+ЛЕТОПИСЬ.md
+ПЛАНЫ.md
