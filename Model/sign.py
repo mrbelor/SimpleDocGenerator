@@ -91,7 +91,8 @@ class _TextSign(InlineImage):
 
     def _insert_image(self):
         self.image_descriptor = str(self.signer.pick(self.name, self.row))
-        return super()._insert_image()
+        # python-docx отдаёт XML картинки с отступами; убираем их, как это делает чтение docx
+        return re.sub(r">\s+<", "><", super()._insert_image())
 
 
 def text_signs(tpl, context: dict, signer: Signer, row: int) -> dict:

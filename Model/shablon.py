@@ -18,11 +18,65 @@ from .sign import Signer, mark_placeholders, swap_placeholders, text_signs
 class MyDocxTemplate(DocxTemplate):
     """DocxTemplate с поддержкой спецификаторов {{Ключ:addr}}, {{Ключ:time}}, {{Ключ:sign}}, {{:table}}."""
 
+    # Чистка XML (patch_xml) зависит только от текста, а шаблон один на все записи:
+    # чистим один раз, дальше берём готовое. Результат тот же.
+    _patched: dict = {}
+
+    def patch_xml(self, src_xml):
+        if src_xml not in self._patched:
+            if len(self._patched) > 32:
+                self._patched.clear()
+            self._patched[src_xml] = super().patch_xml(src_xml)
+        return self._patched[src_xml]
+
     def render_xml_part(self, src_xml, part, context, jinja_env):
         src_xml = mark_placeholders(src_xml)  # заглушка подписи: её {{Ключ:sign}} не для jinja
         # {{Ключ:addr}} -> {{Ключ__addr}}, {{:table}} -> {{__table}}
         src_xml = re.sub(r"(\{\{[^}]*?):([^}]*?\}\})", r"\1__\2", src_xml)
         return super().render_xml_part(src_xml, part, context, jinja_env)
+
+
+class _Composer(Composer):
+    """Composer без лишних проходов по всему документу на каждой записи.
+
+    Обычный Composer после каждой записи заново нумерует их по всему документу,
+    поэтому время растёт квадратично. Каждая такая нумерация полностью затирает
+    прошлую, и больше эти номера никто не читает: одна нумерация после последней
+    записи даёт тот же файл байт в байт.
+    """
+
+    _deferred = True
+
+    def renumber_bookmarks(self):
+        if not self._deferred:
+            super().renumber_bookmarks()
+
+    def renumber_docpr_ids(self):
+        if not self._deferred:
+            super().renumber_docpr_ids()
+
+    def renumber_nvpicpr_ids(self):
+        if not self._deferred:
+            super().renumber_nvpicpr_ids()
+
+    # fix_section_types и fix_header_and_footers начинают с проверки
+    # «len(секций всего документа) == 1 or len(секций записи) == 1» и при ней ничего не делают.
+    # Секции всего документа считаются проходом по всему документу на каждой записи.
+    # Когда в записи одна секция, ответ известен без этого прохода.
+
+    def fix_section_types(self, doc):
+        if len(doc.sections) != 1:
+            super().fix_section_types(doc)
+
+    def fix_header_and_footers(self, doc):
+        if len(doc.sections) != 1:
+            super().fix_header_and_footers(doc)
+
+    def renumber_all(self):
+        self._deferred = False
+        self.renumber_bookmarks()
+        self.renumber_docpr_ids()
+        self.renumber_nvpicpr_ids()
 
 
 def _safe_render(tpl: MyDocxTemplate, context: dict, config_path: str | None = None,
@@ -115,15 +169,15 @@ def _compose_word(data: list, path_to_template: str, config_path: str | None, pr
     _safe_render(tpl, data[0], config_path=config_path, signer=signer, row=1)
     stream = io.BytesIO()
     tpl.save(stream)
-    composer = Composer(Document(stream))
+    composer = _Composer(Document(stream))
 
     for done, item in enumerate(data[1:], 2):
         tpl = MyDocxTemplate(path_to_template)
         _safe_render(tpl, item, config_path=config_path, signer=signer, row=done)
-        stream = io.BytesIO()
-        tpl.save(stream)
         composer.doc.add_page_break()
-        composer.append(Document(stream))
+        composer.append(tpl.docx)
         if progress:
             progress(done, len(data))
+    if len(data) > 1:  # одна запись: обычный Composer тоже ничего не нумерует
+        composer.renumber_all()
     return composer
