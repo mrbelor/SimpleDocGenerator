@@ -12,7 +12,7 @@ from jinja2 import DebugUndefined, UndefinedError, Environment
 import jinja2.exceptions
 
 from .load import traffic_light, get_available_specifiers
-from .sign import Signer, mark_placeholders, swap_placeholders, text_signs
+from .sign import Signer, mark_placeholders, mark_text_names, swap_placeholders, text_signs
 
 
 class MyDocxTemplate(DocxTemplate):
@@ -31,6 +31,7 @@ class MyDocxTemplate(DocxTemplate):
 
     def render_xml_part(self, src_xml, part, context, jinja_env):
         src_xml = mark_placeholders(src_xml)  # заглушка подписи: её {{Ключ:sign}} не для jinja
+        src_xml = mark_text_names(src_xml, self, context)  # {{"Имя":sign}} в тексте
         # {{Ключ:addr}} -> {{Ключ__addr}}, {{:table}} -> {{__table}}
         src_xml = re.sub(r"(\{\{[^}]*?):([^}]*?\}\})", r"\1__\2", src_xml)
         return super().render_xml_part(src_xml, part, context, jinja_env)
@@ -101,6 +102,7 @@ def _safe_render(tpl: MyDocxTemplate, context: dict, config_path: str | None = N
         for spec in specifiers:
             expanded[f"{key}__{spec}"] = traffic_light(val, spec, config_path=config_path)
         expanded[f"{key}__raw"] = val
+    tpl.signer, tpl.sign_row = signer, row  # для {{"Имя":sign}} в тексте (render_xml_part)
     if signer:
         expanded.update(text_signs(tpl, context, signer, row))
 

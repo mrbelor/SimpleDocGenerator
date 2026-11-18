@@ -5,12 +5,15 @@
 - картинка-заглушка с замещающим текстом {{Поле:sign}}: подпись встаёт в её рамку
   (размер, место и обтекание из шаблона, пропорции подписи сохраняются);
 - тег {{Поле:sign}} прямо в тексте: подпись встаёт в строку, высотой SIGN_HEIGHT.
+Без кавычек слева столбец данных, в кавычках имя: {{"Валера":sign}} берёт папку «Валера»
+без всякого столбца. Кавычки любые: " « » “ ” '.
 
 Имя в данных и имя папки сравниваются только по буквам и цифрам, без регистра, ё = е,
 латинские буквы-двойники = русские: «Александров А.Т.» = папка «Александров А Т».
 Инициалы вместо имени, другой порядок слов, опечатка - разные люди: ошибка, а не догадка.
 """
 
+import html
 import io
 import random
 import re
@@ -26,13 +29,33 @@ SIGNS_DIR = "Подписи"
 SIGN_PLACEHOLDER = "заглушка_подписи.png"  # из exe_belly в папку Подписи: чем отметить место в шаблоне
 SIGN_HEIGHT = Mm(12)  # подпись тегом в тексте
 _EXT = (".png", ".jpg", ".jpeg")
-_MARK = "@@sign@@"  # метка в замещающем тексте заглушки между render и подменой
-_ALT_RE = re.compile(r'descr="\{\{\s*([^{}:"]+?)\s*:\s*sign\s*\}\}"')
+_MARK = "@@sign@@"  # метки в замещающем тексте заглушки между render и подменой: столбец
+_MARK_NAME = "@@signname@@"  # и имя в кавычках
+_QO = r"(?:&quot;|&apos;|[\"'«“„])"  # открывающая кавычка, как она лежит в XML
+_QC = r"(?:&quot;|&apos;|[\"'»”“])"
+_ALT_RE = re.compile(r'descr="\{\{\s*(?:' + _QO + r'([^{}]+?)' + _QC + r'|([^{}:"]+?))\s*:\s*sign\s*\}\}"')
+_TEXT_NAME_RE = re.compile(r"\{\{\s*" + _QO + r"([^{}]+?)" + _QC + r"\s*:\s*sign\s*\}\}")
 
 
 def mark_placeholders(xml: str) -> str:
-    """Замещающий текст заглушки {{Поле:sign}} -> метка, чтобы jinja его не трогал."""
-    return _ALT_RE.sub(lambda m: f'descr="{_MARK}{m.group(1)}"', xml)
+    """Замещающий текст заглушки {{Поле:sign}} / {{"Имя":sign}} -> метка, чтобы jinja его не трогал."""
+    def sub(m):
+        name, col = m.group(1), m.group(2)
+        return f'descr="{_MARK_NAME}{name}"' if name is not None else f'descr="{_MARK}{col}"'
+    return _ALT_RE.sub(sub, xml)
+
+
+def mark_text_names(xml: str, tpl, context: dict) -> str:
+    """{{"Имя":sign}} в тексте -> свой ключ в контексте с подписью этого имени."""
+    signer = getattr(tpl, "signer", None)
+    if signer is None:
+        return xml
+
+    def sub(m):
+        key = f"__signname_{len(context)}"
+        context[key] = _TextSign(tpl, signer, html.unescape(m.group(1)), tpl.sign_row)
+        return "{{" + key + "}}"
+    return _TEXT_NAME_RE.sub(sub, xml)
 
 
 _TWINS = str.maketrans("abcehkmoptxy", "авсенкмортху")  # латиница, похожая на кириллицу
@@ -132,17 +155,20 @@ def swap_placeholders(tpl, item: dict, row: int, signer: Signer) -> None:
     for part in _story_parts(tpl.docx):
         for docpr in list(part.element.iter(qn("wp:docPr"))):
             descr = docpr.get("descr", "")
-            if not descr.startswith(_MARK):
+            if descr.startswith(_MARK_NAME):
+                mark, name = _MARK_NAME, descr[len(_MARK_NAME):]
+            elif descr.startswith(_MARK):
+                mark, col = _MARK, descr[len(_MARK):]
+                if col not in item:
+                    raise ValueError(f'В шаблоне подпись по полю "{col}", а в данных такого столбца нет')
+                name = item[col]
+            else:
                 continue
-            col = descr[len(_MARK):]
-            if col not in item:
-                raise ValueError(f'В шаблоне подпись по полю "{col}", а в данных такого столбца нет')
-            name = item[col]
             path = signer.pick(name, row)
             drawing = docpr.getparent()
             image = part.package.get_or_add_image_part(io.BytesIO(path.read_bytes()))
             drawing.find(".//" + qn("a:blip")).set(qn("r:embed"), part.relate_to(image, RT.IMAGE))
             _fit(drawing, path)
             for e in (docpr, drawing.find(".//" + qn("pic:cNvPr"))):
-                if e is not None and e.get("descr", "").startswith(_MARK):
+                if e is not None and e.get("descr", "").startswith(mark):
                     e.set("descr", str(name))
